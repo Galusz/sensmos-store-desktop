@@ -1,8 +1,30 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Uprawnienia wydania na macOS.
+
+  Szablon Fluttera zostawia tu SAMA piaskownice, a piaskownica bez zgody na siec odcina
+  wszystko — apka nie rozwiaze nawet nazwy sensmos.com i konczy sie „failed host lookup".
+  W wersji do debugowania czesc zgod byla, w wydaniowej nie bylo zadnej, wiec blad wyszedl
+  dopiero u ludzi. Kazda pozycja nizej odpowiada czemus, co ta apka naprawde robi.
+-->
 <plist version="1.0">
 <dict>
 	<key>com.apple.security.app-sandbox</key>
+	<true/>
+
+	<!-- Rozmowa z backendem: HTTPS po stan konta i WebSocket /v1/store po pliki. -->
+	<key>com.apple.security.network.client</key>
+	<true/>
+
+	<!-- Nasluch na porcie: przy transferze wprost to SPRZEDAWCA dzwoni do nas
+	     (trasa `client` w store_direct), a UPnP prosi router o przekierowanie. -->
+	<key>com.apple.security.network.server</key>
+	<true/>
+
+	<!-- Pliki wskazane przez czlowieka: wybor plikow do wyslania, katalog pobran
+	     i katalogi pilnowane przez kopie zapasowa. -->
+	<key>com.apple.security.files.user-selected.read-write</key>
 	<true/>
 </dict>
 </plist>
