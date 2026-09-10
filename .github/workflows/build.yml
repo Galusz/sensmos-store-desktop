@@ -1,0 +1,93 @@
+# Budowanie Sensmos Store na trzy systemy.
+#
+# Windows dalo sie robic na miejscu; Linuksa i macOS nie — Flutter odmawia wprost („build linux
+# only supported on Linux hosts"), a macOS potrzebuje macOS z Xcode. Stad ten plik: maszyny
+# GitHuba budują to, czego nie da się zbudować u siebie.
+#
+# Odpalenie: `git tag v1.0.1 && git push --tags` albo recznie z zakladki Actions. Przy tagu
+# paczki laduja od razu przy wydaniu.
+name: build
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with: { channel: stable }
+      - run: flutter pub get
+      - run: flutter test
+      - run: flutter build windows --release
+      - name: Spakuj
+        shell: pwsh
+        run: |
+          Compress-Archive -Path build\windows\x64\runner\Release\* `
+                           -DestinationPath sensmos-store-win-x64.zip -Force
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: sensmos-store-win-x64.zip
+
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with: { channel: stable }
+      # GTK i narzedzia buduja sama apke; libmpv jest od odtwarzacza (media_kit),
+      # a appindicator od ikony w zasobniku.
+      - name: Zaleznosci systemowe
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config \
+                                  libgtk-3-dev liblzma-dev libstdc++-12-dev \
+                                  libmpv-dev mpv libayatana-appindicator3-dev
+      - run: flutter pub get
+      - run: flutter test
+      - run: flutter build linux --release
+      - name: Spakuj
+        run: tar -czf sensmos-store-linux-x64.tar.gz -C build/linux/x64/release/bundle .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: sensmos-store-linux-x64.tar.gz
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with: { channel: stable }
+      - run: flutter pub get
+      - run: flutter test
+      - run: flutter build macos --release
+      # Bez podpisu i bez notaryzacji — Gatekeeper pokaze ostrzezenie i trzeba otworzyc przez
+      # prawy przycisk → Otworz. Podpisanie wymaga konta Apple Developer; swiadomie tego nie ma.
+      - name: Spakuj
+        run: |
+          cd build/macos/Build/Products/Release
+          zip -qry "$GITHUB_WORKSPACE/sensmos-store-macos.zip" *.app
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: sensmos-store-macos.zip
+
+  wydanie:
+    needs: [windows, linux, macos]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: paczki }
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: paczki/*/*
+          fail_on_unmatched_files: true

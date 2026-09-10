@@ -52,7 +52,11 @@ dependencies:
   window_manager: ^0.5.2
   media_kit: ^1.2.6
   media_kit_video: ^2.0.1
+  # Biblioteki odtwarzacza per system. Pakiet dla Windows byl juz tu; Linux i macOS musza miec
+  # swoje, inaczej build na tamtych maszynach konczy sie brakiem libmpv.
   media_kit_libs_windows_video: ^1.0.11
+  media_kit_libs_linux: ^1.2.1
+  media_kit_libs_macos_video: ^1.1.4
   audio_metadata_reader: ^1.4.1
 
 dev_dependencies:
