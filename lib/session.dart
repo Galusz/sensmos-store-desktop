@@ -41,6 +41,17 @@ class Session extends ChangeNotifier {
   double dziennieZaGb = 0;
   double dostepneGalu = 0;
 
+  /// Widełki wyboru liczby kopii — z serwera, żeby nie rozjechały się z tym, co on wpuszcza.
+  int minKopii = 2, maxKopii = 4, zalecaneKopii = 3;
+  /// Ile GB da się kupić PRZY DANEJ liczbie kopii. Każda kopia musi trafić do innego właściciela,
+  /// więc im więcej kopii, tym słabszy jest ostatni potrzebny sprzedawca — i tym niższy sufit.
+  Map<int, int> maxGbDlaKopii = const {};
+  /// Cena za gigabajt za JEDNĄ kopię na dobę.
+  double zaGbZaKopie = 0.1;
+  /// Ile kopii ma trzymać wykupiony pakiet i ile ich w tej chwili naprawdę stoi. Różnią się,
+  /// gdy sprzedawca zamilkł i trwa odbudowa.
+  int kopiiPakietu = 0, kopiiTeraz = 0;
+
   String get owner => '${pairing['owner']}';
   String get _be => (pairing['be'] as String?) ?? Pairing.be;
 
@@ -62,6 +73,8 @@ class Session extends ChangeNotifier {
       hasPackage = p['has_package'] == true;
       unpaidDays = (num.tryParse('${p['unpaid_days']}') ?? 0).toInt();
       sellersOnline = (num.tryParse('${p['sellers_online']}') ?? 0).toInt();
+      kopiiPakietu = (num.tryParse('${p['copies']}') ?? 0).toInt();
+      kopiiTeraz = (num.tryParse('${p['copies_now']}') ?? 0).toInt();
     }
     final c = await pobierz('/v1/store/capacity');
     if (c != null) {
@@ -70,6 +83,18 @@ class Session extends ChangeNotifier {
       final zaPakiet = (num.tryParse('${c['daily_galu']}') ?? 0).toDouble();
       final gbPakietu = (num.tryParse('${c['package_gb']}') ?? 1).toDouble();
       dziennieZaGb = gbPakietu > 0 ? zaPakiet / gbPakietu : 0;
+      minKopii = (num.tryParse('${c['min_copies']}') ?? 0).toInt().clamp(1, 4);
+      maxKopii = (num.tryParse('${c['max_copies']}') ?? 0).toInt().clamp(minKopii, 4);
+      zalecaneKopii = (num.tryParse('${c['default_copies']}') ?? 0).toInt().clamp(minKopii, maxKopii);
+      zaGbZaKopie = double.tryParse('${c['price_gb_copy']}') ?? 0.1;
+      final tab = c['max_gb_by_copies'];
+      if (tab is Map) {
+        maxGbDlaKopii = {
+          for (final e in tab.entries)
+            if (int.tryParse('${e.key}') != null)
+              int.parse('${e.key}'): (num.tryParse('${e.value}') ?? 0).toInt(),
+        };
+      }
     }
     final w = await pobierz('/v1/wallet/$owner');
     if (w != null) dostepneGalu = double.tryParse('${w['available']}') ?? 0;
@@ -78,8 +103,16 @@ class Session extends ChangeNotifier {
 
   /// Wykup miejsca. Ta sama wiadomość, którą wysyła telefon — sparowany komputer jest dla
   /// serwera zwykłym kupującym, więc nie ma tu osobnej ścieżki ani osobnego uprawnienia.
-  Future<Map<String, dynamic>> kup(int gb) async {
-    final r = await relay!.package(gb: gb);
+  Future<Map<String, dynamic>> kup(int gb, int kopii) async {
+    final r = await relay!.package(gb: gb, copies: kopii);
+    if (r['ok'] == true) { await odswiezStan(); await refresh(); }
+    return r;
+  }
+
+  /// Zmiana liczby kopii wykupionego pakietu. W górę serwer dobiera sprzedawcę od razu i sam
+  /// odmawia, gdy nie ma z kogo — wtedy oddajemy jego powód, bo tylko on wie, czego zabrakło.
+  Future<Map<String, dynamic>> ustawKopie(int kopii) async {
+    final r = await relay!.package(copies: kopii);
     if (r['ok'] == true) { await odswiezStan(); await refresh(); }
     return r;
   }

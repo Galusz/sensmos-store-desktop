@@ -183,6 +183,215 @@ class _PairScreenState extends State<PairScreen> {
       );
 }
 
+/// Parowanie KOLEJNEGO komputera — bez sięgania po telefon.
+///
+/// Pól jest więcej niż dwa, więc pełny ekran, nie okienko. I te same pola, co na ekranie parowania
+/// w telefonie: kod, kto prosi i o co, przełącznik odczytu plików — bo to ta sama czynność i nie
+/// ma powodu, żeby wyglądała inaczej po tej stronie.
+class EkranParowaniaPC extends StatefulWidget {
+  final Map<String, dynamic> moje;
+  const EkranParowaniaPC({super.key, required this.moje});
+  @override
+  State<EkranParowaniaPC> createState() => _EkranParowaniaPCState();
+}
+
+class _EkranParowaniaPCState extends State<EkranParowaniaPC> {
+  final _kod = TextEditingController();
+  Map<String, dynamic>? _kto;            // {name, pub, want} spod tego kodu
+  Map<String, String> _opisy = {};       // klucz zakresu → opis, z serwera
+  final _wybrane = <String>{};
+  bool _prosilOParowanie = false;        // poprosił o `token.issue`, a tego oddać nie możemy
+  bool _czytaPliki = false;
+  String? _busy, _blad;
+  bool _gotowe = false;
+
+  /// Ziarna skrzynki nie mamy, gdy właściciel wpuścił nas bez prawa odczytu — wtedy nie ma czego
+  /// przekazać dalej i przełącznik musi być martwy, a nie tylko bezskuteczny.
+  bool get _mamOdczyt {
+    final z = widget.moje['box_seed'];
+    return z is String && z.isNotEmpty;
+  }
+
+  String get _be => '${widget.moje['be'] ?? Pairing.be}';
+
+  @override
+  void initState() {
+    super.initState();
+    DalszeParowanie.opisy(_be).then((m) { if (mounted) setState(() => _opisy = m); });
+  }
+
+  @override
+  void dispose() { _kod.dispose(); super.dispose(); }
+
+  Future<void> _sprawdz() async {
+    setState(() { _busy = t('pair2.searching'); _blad = null; });
+    try {
+      final f = await DalszeParowanie.ktoCzeka(_be, _kod.text);
+      final moje = ((widget.moje['scopes'] as List?) ?? const []).map((e) => '$e').toSet();
+      final chce = ((f['want'] as List?) ?? const []).map((e) => '$e').toSet();
+      if (!mounted) return;
+      setState(() {
+        _kto = f;
+        _busy = null;
+        _prosilOParowanie = chce.contains('token.issue');
+        // Zaznaczamy to, o co poprosił, przycięte do tego, co sami mamy. Prawa parowania dalej
+        // na liście nie ma, bo backend i tak by je odciął — a pole, które nic nie robi, jest
+        // obietnicą bez pokrycia.
+        _wybrane
+          ..clear()
+          ..addAll(chce.intersection(moje)..remove('token.issue'));
+      });
+    } catch (e) {
+      if (mounted) setState(() { _busy = null; _blad = '$e'; _kto = null; });
+    }
+  }
+
+  Future<void> _sparuj() async {
+    setState(() { _busy = t('pair2.pairing'); _blad = null; });
+    try {
+      await DalszeParowanie.sparuj(
+        moje: widget.moje,
+        kod: _kod.text,
+        zakresy: _wybrane.toList(),
+        czytaPliki: _czytaPliki && _mamOdczyt,
+        nazwa: '${_kto?['name'] ?? 'computer'}',
+      );
+      if (mounted) setState(() { _busy = null; _gotowe = true; });
+    } catch (e) {
+      if (mounted) setState(() { _busy = null; _blad = '$e'; });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+        backgroundColor: bg,
+        appBar: AppBar(
+          backgroundColor: bg,
+          title: Text(t('pair2.title'), style: const TextStyle(fontSize: 15)),
+        ),
+        body: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 520),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                if (_gotowe) ...[
+                  const Icon(Icons.check_circle_outline, color: teal, size: 42),
+                  const SizedBox(height: 14),
+                  Text(t('pair2.done'), textAlign: TextAlign.center,
+                      style: const TextStyle(color: muted, fontSize: 13, height: 1.4)),
+                  const SizedBox(height: 22),
+                  FilledButton(
+                      onPressed: () => Navigator.pop(context),
+                      style: FilledButton.styleFrom(backgroundColor: teal),
+                      child: Text(t('pair2.close'))),
+                ] else ...[
+                  Text(t('pair2.hint'),
+                      style: const TextStyle(color: muted, fontSize: 12.5, height: 1.4)),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: _kod,
+                    autofocus: true,
+                    textCapitalization: TextCapitalization.characters,
+                    onChanged: (_) => setState(() {}),
+                    onSubmitted: (_) { if (_busy == null && _kod.text.isNotEmpty) _sprawdz(); },
+                    style: const TextStyle(color: Colors.white, letterSpacing: 3,
+                        fontFamily: 'monospace'),
+                    decoration: InputDecoration(
+                      labelText: t('pair2.code'),
+                      labelStyle: const TextStyle(color: muted),
+                      enabledBorder: const OutlineInputBorder(borderSide: BorderSide(color: line)),
+                      focusedBorder: const OutlineInputBorder(borderSide: BorderSide(color: teal)),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  OutlinedButton(
+                    onPressed: _busy == null && _kod.text.isNotEmpty ? _sprawdz : null,
+                    style: OutlinedButton.styleFrom(foregroundColor: teal),
+                    child: Text(t('pair2.check')),
+                  ),
+                  if (_kto != null) ...[
+                    const SizedBox(height: 20),
+                    Container(
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                          color: card, borderRadius: BorderRadius.circular(10)),
+                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        Text(t('pair2.asks', {'name': '${_kto!['name']}'}),
+                            style: const TextStyle(color: Colors.white, fontSize: 13,
+                                fontWeight: FontWeight.w600)),
+                        const SizedBox(height: 4),
+                        Text(t('pair2.pickHint'),
+                            style: const TextStyle(color: muted, fontSize: 11.5, height: 1.35)),
+                        const SizedBox(height: 6),
+                        for (final k in _wybrane.toList())
+                          CheckboxListTile(
+                            value: _wybrane.contains(k),
+                            onChanged: (v) => setState(() =>
+                                v == true ? _wybrane.add(k) : _wybrane.remove(k)),
+                            dense: true,
+                            contentPadding: EdgeInsets.zero,
+                            controlAffinity: ListTileControlAffinity.leading,
+                            activeColor: teal,
+                            title: Text(_opisy[k] ?? k,
+                                style: const TextStyle(color: Colors.white, fontSize: 12.5)),
+                          ),
+                        CheckboxListTile(
+                          value: _czytaPliki && _mamOdczyt,
+                          onChanged:
+                              _mamOdczyt ? (v) => setState(() => _czytaPliki = v == true) : null,
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                          controlAffinity: ListTileControlAffinity.leading,
+                          activeColor: teal,
+                          title: Text(t('pair2.readFiles'),
+                              style: TextStyle(
+                                  color: _mamOdczyt ? Colors.white : faint, fontSize: 12.5)),
+                          subtitle: Text(
+                              _mamOdczyt ? t('pair2.readFilesHint') : t('pair2.noSeed'),
+                              style: TextStyle(color: _mamOdczyt ? muted : amber,
+                                  fontSize: 11, height: 1.35)),
+                        ),
+                        // Tamten komputer poprosił także o prawo parowania kolejnych. Nie damy mu
+                        // go — i lepiej powiedzieć to wprost, niż zostawić po sobie ciszę.
+                        if (_prosilOParowanie) ...[
+                          const SizedBox(height: 6),
+                          Text(t('pair2.noChain'),
+                              style: const TextStyle(color: faint, fontSize: 11, height: 1.35)),
+                        ],
+                      ]),
+                    ),
+                    const SizedBox(height: 14),
+                    FilledButton(
+                      onPressed: _busy == null && _wybrane.isNotEmpty ? _sparuj : null,
+                      style: FilledButton.styleFrom(backgroundColor: teal),
+                      child: Text(t('pair2.pair')),
+                    ),
+                  ],
+                  if (_busy != null) ...[
+                    const SizedBox(height: 16),
+                    Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                      const SizedBox(width: 15, height: 15,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: teal)),
+                      const SizedBox(width: 10),
+                      Text(_busy!, style: const TextStyle(color: muted, fontSize: 12.5)),
+                    ]),
+                  ],
+                  if (_blad != null) ...[
+                    const SizedBox(height: 14),
+                    Text(_blad!, style: const TextStyle(color: amber, fontSize: 12.5)),
+                  ],
+                  const SizedBox(height: 24),
+                  Text(t('pair.privacy'),
+                      style: const TextStyle(color: faint, fontSize: 11, height: 1.4)),
+                ],
+              ]),
+            ),
+          ),
+        ),
+      );
+}
+
 // ── główny widok ─────────────────────────────────────────────────────────────
 
 enum SortBy { name, size, date }
@@ -227,6 +436,8 @@ class _HomeState extends State<Home> {
   Tagi? _tagi;
   /// Ile gigabajtow ma miec pakiet przy wykupie. Poza ekranem zakupu nie znaczy nic.
   int _gbDoKupienia = 1;
+  /// Wybor liczby kopii na ekranie zakupu. null = jeszcze nietkniety, bierz zalecana.
+  int? _kopieDoKupienia;
 
   @override
   void initState() {
@@ -616,6 +827,18 @@ class _HomeState extends State<Home> {
                     Flexible(child: Text(t('menu.closeToTray'),
                         style: const TextStyle(fontSize: 12.5))),
                   ])),
+                  // Wpuszczenie kolejnego komputera pokazujemy WYŁĄCZNIE wtedy, gdy ten ma na to
+                  // pozwolenie z telefonu. Pozycja, która kończy się odmową serwera, jest gorsza
+                  // niż jej brak.
+                  if (DalszeParowanie.wolno(widget.pairing)) ...[
+                    const PopupMenuDivider(height: 6),
+                    PopupMenuItem(value: 'pairPc', height: 34, child: Row(children: [
+                      const Icon(Icons.devices_other_outlined, size: 15, color: muted),
+                      const SizedBox(width: 8),
+                      Flexible(child: Text(t('menu.pairPc'),
+                          style: const TextStyle(fontSize: 12.5))),
+                    ])),
+                  ],
                   const PopupMenuDivider(height: 6),
                   PopupMenuItem(value: 'unpair', height: 34, child: Row(children: [
                     const Icon(Icons.link_off, size: 15, color: red),
@@ -665,6 +888,13 @@ class _HomeState extends State<Home> {
       if (mounted) {
         await Navigator.of(context)
             .push(MaterialPageRoute(builder: (_) => const EkranDziennika()));
+      }
+      return;
+    }
+    if (v == 'pairPc') {
+      if (mounted) {
+        await Navigator.of(context).push(MaterialPageRoute(
+            builder: (_) => EkranParowaniaPC(moje: widget.pairing)));
       }
       return;
     }
@@ -752,6 +982,24 @@ class _HomeState extends State<Home> {
         Text(t('pkg.daily', {'galu': _s.daily.toStringAsFixed(2), 'n': _s.sellers}),
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(color: faint, fontSize: 11)),
+        // Ile kopii pakiet MA MIEC — klikalne, bo to jedno pytanie, wiec wolno je zadac
+        // w okienku. Gdy sprzedawca zamilknie, pod spodem wychodzi, ze trwa odbudowa;
+        // udawanie kompletu byloby tu najgorsza z mozliwych uprzejmosci.
+        if (_s.kopiiPakietu > 0) InkWell(
+          onTap: _busy == null ? _zmienKopie : null,
+          child: Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Row(children: [
+              Expanded(child: Text(t('copies.now', {'n': _s.kopiiPakietu}),
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: faint, fontSize: 11))),
+              const Icon(Icons.tune, size: 12, color: faint),
+            ]),
+          ),
+        ),
+        if (_s.kopiiTeraz > 0 && _s.kopiiTeraz < _s.kopiiPakietu)
+          Text(t('copies.rebuild', {'a': _s.kopiiTeraz, 'b': _s.kopiiPakietu}),
+              style: const TextStyle(color: amber, fontSize: 10.5, height: 1.3)),
         if (!_s.canRead) ...[
           const SizedBox(height: 8),
           Text(t('pkg.writeOnly'),
@@ -1081,9 +1329,12 @@ class _HomeState extends State<Home> {
   /// Konto bez pakietu: powod, oferta i przycisk. Wykup idzie stad, a nie „w telefonie" —
   /// odsylanie czlowieka do innego urzadzenia po to, zeby wydal pieniadze, jest wymyslone.
   Widget _ekranZakupu() {
-    final max = _s.maxGb;
+    final kopii = (_kopieDoKupienia ?? _s.zalecaneKopii).clamp(_s.minKopii, _s.maxKopii);
+    // Sufit zalezy od liczby kopii — kazda musi trafic do innego wlasciciela, wiec przy trzech
+    // ogranicza nas trzeci najlepszy sprzedawca, a nie drugi.
+    final max = _s.maxGbDlaKopii[kopii] ?? _s.maxGb;
     final gb = max < 1 ? 1 : _gbDoKupienia.clamp(1, max);
-    final dziennie = _s.dziennieZaGb * gb;
+    final dziennie = _s.zaGbZaKopie * kopii * gb;
     final dni = dziennie > 0 ? (_s.dostepneGalu / dziennie).floor() : 0;
     return Center(child: SingleChildScrollView(
       padding: const EdgeInsets.all(28),
@@ -1142,8 +1393,10 @@ class _HomeState extends State<Home> {
                     ),
                   ),
                 const Divider(height: 18, color: line),
+                _wyborKopii(kopii, (n) => setState(() => _kopieDoKupienia = n)),
+                const SizedBox(height: 10),
                 Text(t('nopkg.cost',
-                        {'galu': dziennie.toStringAsFixed(2), 'n': _s.kopie}),
+                        {'galu': dziennie.toStringAsFixed(2), 'n': kopii}),
                     style: const TextStyle(color: Colors.white, fontSize: 12.5)),
                 const SizedBox(height: 4),
                 Text(
@@ -1158,7 +1411,7 @@ class _HomeState extends State<Home> {
             ),
             const SizedBox(height: 14),
             SizedBox(width: double.infinity, child: FilledButton(
-              onPressed: _busy == null ? () => _kup(gb) : null,
+              onPressed: _busy == null ? () => _kup(gb, kopii) : null,
               style: FilledButton.styleFrom(backgroundColor: teal,
                   padding: const EdgeInsets.symmetric(vertical: 13)),
               child: Text(t('nopkg.buy', {'n': gb}),
@@ -1179,8 +1432,63 @@ class _HomeState extends State<Home> {
     ));
   }
 
-  Future<void> _kup(int gb) => _run(t('busy.refreshing'), () async {
-        final r = await _s.kup(gb);
+  /// Zmiana liczby kopii wykupionego pakietu. Jedno pytanie, wiec okienko — te same widelki
+  /// i to samo wyjasnienie, co przy zakupie.
+  Future<void> _zmienKopie() async {
+    var wybrane = _s.kopiiPakietu.clamp(_s.minKopii, _s.maxKopii);
+    final n = await showDialog<int>(context: context, builder: (ctx) => StatefulBuilder(
+      builder: (ctx, ustaw) => AlertDialog(
+        backgroundColor: card,
+        title: Text(t('copies.label'), style: const TextStyle(fontSize: 15)),
+        content: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 380),
+          child: _wyborKopii(wybrane, (v) => ustaw(() => wybrane = v)),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: Text(t('dlg.cancel'))),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, wybrane),
+              style: FilledButton.styleFrom(backgroundColor: teal),
+              child: Text(t('dlg.go'))),
+        ],
+      ),
+    ));
+    if (n == null || n == _s.kopiiPakietu || !mounted) return;
+    await _run(t('busy.copies'), () async {
+      final r = await _s.ustawKopie(n);
+      if (r['ok'] == true) { _toast(t('copies.done', {'n': n})); return; }
+      _toast('${r['error']}', bad: true);
+    });
+  }
+
+  /// Wybor liczby kopii. Zalecana jest OPISANA, nie tylko podswietlona — czlowiek ma wiedziec
+  /// dlaczego, zanim zaplaci o polowe wiecej.
+  Widget _wyborKopii(int wybrane, void Function(int) wybierz) =>
+      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(t('copies.label'), style: const TextStyle(color: muted, fontSize: 12)),
+        const SizedBox(height: 6),
+        Row(children: [
+          for (var n = _s.minKopii; n <= _s.maxKopii; n++) Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: ChoiceChip(
+              selected: wybrane == n,
+              onSelected: _busy == null ? (_) => wybierz(n) : null,
+              backgroundColor: bg,
+              selectedColor: teal.withValues(alpha: 0.18),
+              side: BorderSide(color: wybrane == n ? teal : line),
+              showCheckmark: false,
+              label: Text(n == _s.zalecaneKopii ? t('copies.rec', {'n': n}) : '$n',
+                  style: TextStyle(color: wybrane == n ? teal : muted, fontSize: 11.5)),
+            ),
+          ),
+        ]),
+        const SizedBox(height: 6),
+        Text(t('copies.why'),
+            style: const TextStyle(color: faint, fontSize: 10.5, height: 1.35)),
+      ]);
+
+  Future<void> _kup(int gb, int kopii) => _run(t('busy.refreshing'), () async {
+        final r = await _s.kup(gb, kopii);
         if (r['ok'] == true) { _toast(t('nopkg.bought', {'n': gb})); return; }
         // Brak pokrycia to jedyna odmowa, ktora czlowiek moze sam naprawic — wiec podajemy
         // dokladne liczby od serwera, a nie samo „nie udalo sie".

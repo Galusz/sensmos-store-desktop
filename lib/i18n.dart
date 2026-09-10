@@ -80,6 +80,30 @@ const _slowniki = <String, Map<String, String>>{
     'pair.expired': 'the code expired',
     'pair.timeout': 'nobody paired within the time limit',
 
+    'pair2.title': 'Pair another computer',
+    'pair2.hint': 'Start Sensmos Store on the other computer. It shows a code — type it here. '
+        'You will not need the phone.',
+    'pair2.code': 'Code from the other computer',
+    'pair2.check': 'Check the code',
+    'pair2.asks': '„{name}” is asking for access to the account',
+    'pair2.pickHint': 'Tick what that computer may do. You can take it back at any time from the '
+        'phone, under Settings → Paired devices.',
+    'pair2.readFiles': 'May read files',
+    'pair2.readFilesHint': 'Without this it can upload files and see the list, but will not open '
+        'a single name — not even its own upload after a restart.',
+    'pair2.noSeed': 'This computer cannot pass on the right to read, because it does not have it '
+        'either. Pair the other computer from the phone.',
+    'pair2.noChain': 'A computer paired from here cannot pair further ones. That takes the phone.',
+    'pair2.pair': 'Pair',
+    'pair2.searching': 'Looking…',
+    'pair2.pairing': 'Pairing…',
+    'pair2.done': 'Paired. The other computer should open your files in a moment.',
+    'pair2.noToken': 'the server would not issue a token',
+    'pair2.noHandover': 'the token could not be handed over',
+    'pair2.noBox': 'this computer has no account key',
+    'pair2.close': 'Close',
+    'menu.pairPc': 'Pair another computer',
+
     'menu.account': 'Account',
     'menu.language': 'Language',
     'menu.hide': 'Hide to tray',
@@ -158,6 +182,15 @@ const _slowniki = <String, Map<String, String>>{
     'nopkg.card': 'No package',
     'nopkg.cardBody': 'Buy space to start putting files here.',
     'nopkg.max': 'at most {n} GB right now',
+    'copies.label': 'Number of copies',
+    'copies.rec': '{n} · recommended',
+    'copies.why': 'A host that goes quiet only drops out of the package after three days, and '
+        'only then is the copy rebuilt elsewhere. With two copies the file hangs on a single '
+        'disk for that time; with three, on two.',
+    'copies.now': '{n} copies of every file',
+    'copies.rebuild': 'Rebuilding: {a} of {b} copies in place',
+    'copies.done': 'Now {n} copies of every file',
+    'busy.copies': 'Changing the number of copies…',
     'arrears.title': 'Uploads are paused \u2014 unpaid days: {n}',
     'arrears.body': 'The daily fee did not go through. Top up GALU; uploads resume after one paid '
         'day. Your files stay exactly where they are.',
@@ -313,6 +346,30 @@ const _slowniki = <String, Map<String, String>>{
     'pair.expired': 'kod wygasł',
     'pair.timeout': 'nikt nie sparował się w wyznaczonym czasie',
 
+    'pair2.title': 'Sparuj kolejny komputer',
+    'pair2.hint': 'Uruchom Sensmos Store na tamtym komputerze. Pokaże kod — przepisz go tutaj. '
+        'Telefon nie będzie potrzebny.',
+    'pair2.code': 'Kod z tamtego komputera',
+    'pair2.check': 'Sprawdź kod',
+    'pair2.asks': '„{name}” prosi o dostęp do konta',
+    'pair2.pickHint': 'Zaznacz, co temu komputerowi wolno. Możesz to odebrać w każdej chwili '
+        'z telefonu, w Ustawieniach → Sparowane urządzenia.',
+    'pair2.readFiles': 'Może czytać pliki',
+    'pair2.readFilesHint': 'Bez tego wyśle pliki i zobaczy listę, ale nie otworzy ani jednej '
+        'nazwy — nawet własnej wysyłki po restarcie.',
+    'pair2.noSeed': 'Ten komputer nie ma czego przekazać: sam nie może czytać plików. '
+        'Tamten sparuj z telefonu.',
+    'pair2.noChain': 'Komputer sparowany stąd nie sparuje kolejnych. Do tego trzeba telefonu.',
+    'pair2.pair': 'Sparuj',
+    'pair2.searching': 'Szukam…',
+    'pair2.pairing': 'Paruję…',
+    'pair2.done': 'Sparowano. Tamten komputer powinien za chwilę otworzyć Twoje pliki.',
+    'pair2.noToken': 'serwer nie wydał tokenu',
+    'pair2.noHandover': 'nie udało się przekazać tokenu',
+    'pair2.noBox': 'ten komputer nie ma klucza konta',
+    'pair2.close': 'Zamknij',
+    'menu.pairPc': 'Sparuj kolejny komputer',
+
     'menu.account': 'Konto',
     'menu.language': 'Język',
     'menu.hide': 'Schowaj do zasobnika',
@@ -391,6 +448,15 @@ const _slowniki = <String, Map<String, String>>{
     'nopkg.card': 'Brak pakietu',
     'nopkg.cardBody': 'Wykup miejsce, \u017ceby zacz\u0105\u0107 tu trzyma\u0107 pliki.',
     'nopkg.max': 'teraz najwy\u017cej {n} GB',
+    'copies.label': 'Ile kopii',
+    'copies.rec': '{n} · zalecane',
+    'copies.why': 'Host, który zamilknie, wypada z pakietu dopiero po trzech dobach i dopiero '
+        'wtedy kopia odbudowuje się gdzie indziej. Przy dwóch kopiach plik wisi przez ten czas '
+        'na jednym dysku, przy trzech — na dwóch.',
+    'copies.now': '{n} kopie każdego pliku',
+    'copies.rebuild': 'Odbudowa: {a} z {b} kopii na miejscu',
+    'copies.done': 'Teraz {n} kopie każdego pliku',
+    'busy.copies': 'Zmieniam liczbę kopii…',
     'arrears.title': 'Wysy\u0142ki wstrzymane \u2014 nieop\u0142acone doby: {n}',
     'arrears.body': 'Op\u0142ata za dob\u0119 nie przesz\u0142a. Dop\u0142a\u0107 GALU \u2014 wysy\u0142ki wracaj\u0105 po jednej '
         'op\u0142aconej dobie. Pliki zostaj\u0105 dok\u0142adnie tam, gdzie by\u0142y.',
@@ -545,6 +611,31 @@ const _slowniki = <String, Map<String, String>>{
     'pair.expired': 'der Code ist abgelaufen',
     'pair.timeout': 'niemand hat sich rechtzeitig gekoppelt',
 
+    'pair2.title': 'Weiteren Computer koppeln',
+    'pair2.hint': 'Starten Sie Sensmos Store auf dem anderen Computer. Er zeigt einen Code — '
+        'tippen Sie ihn hier ein. Das Telefon brauchen Sie dafür nicht.',
+    'pair2.code': 'Code vom anderen Computer',
+    'pair2.check': 'Code prüfen',
+    'pair2.asks': '„{name}” bittet um Zugang zum Konto',
+    'pair2.pickHint': 'Wählen Sie, was dieser Computer darf. Sie können es jederzeit am Telefon '
+        'zurücknehmen, unter Einstellungen → Gekoppelte Geräte.',
+    'pair2.readFiles': 'Darf Dateien lesen',
+    'pair2.readFilesHint': 'Ohne dies lädt er Dateien hoch und sieht die Liste, öffnet aber '
+        'keinen einzigen Namen — nicht einmal den eigenen Upload nach einem Neustart.',
+    'pair2.noSeed': 'Dieser Computer kann das Leserecht nicht weitergeben, weil er es selbst '
+        'nicht hat. Koppeln Sie den anderen Computer vom Telefon aus.',
+    'pair2.noChain': 'Ein von hier gekoppelter Computer koppelt keine weiteren. Dafür braucht es '
+        'das Telefon.',
+    'pair2.pair': 'Koppeln',
+    'pair2.searching': 'Suche…',
+    'pair2.pairing': 'Kopple…',
+    'pair2.done': 'Gekoppelt. Der andere Computer sollte Ihre Dateien gleich öffnen.',
+    'pair2.noToken': 'der Server hat kein Token ausgestellt',
+    'pair2.noHandover': 'das Token konnte nicht übergeben werden',
+    'pair2.noBox': 'dieser Computer hat keinen Kontoschlüssel',
+    'pair2.close': 'Schließen',
+    'menu.pairPc': 'Weiteren Computer koppeln',
+
     'menu.account': 'Konto',
     'menu.language': 'Sprache',
     'menu.hide': 'In den Infobereich',
@@ -623,6 +714,15 @@ const _slowniki = <String, Map<String, String>>{
     'nopkg.card': 'Kein Paket',
     'nopkg.cardBody': 'Kaufen Sie Platz, um hier Dateien abzulegen.',
     'nopkg.max': 'derzeit h\u00f6chstens {n} GB',
+    'copies.label': 'Wie viele Kopien',
+    'copies.rec': '{n} · empfohlen',
+    'copies.why': 'Ein Host, der verstummt, fällt erst nach drei Tagen aus dem Paket, und erst '
+        'dann wird die Kopie anderswo neu aufgebaut. Bei zwei Kopien hängt die Datei diese Zeit '
+        'an einer einzigen Platte, bei drei an zweien.',
+    'copies.now': '{n} Kopien jeder Datei',
+    'copies.rebuild': 'Wiederaufbau: {a} von {b} Kopien vorhanden',
+    'copies.done': 'Jetzt {n} Kopien jeder Datei',
+    'busy.copies': 'Zahl der Kopien wird geändert…',
     'arrears.title': 'Uploads pausiert \u2014 unbezahlte Tage: {n}',
     'arrears.body': 'Die Tagesgeb\u00fchr ging nicht durch. Laden Sie GALU auf \u2014 Uploads laufen nach '
         'einem bezahlten Tag weiter. Ihre Dateien bleiben genau dort, wo sie sind.',
@@ -777,6 +877,31 @@ const _slowniki = <String, Map<String, String>>{
     'pair.expired': 'o código expirou',
     'pair.timeout': 'ninguém emparelhou dentro do tempo',
 
+    'pair2.title': 'Emparelhar outro computador',
+    'pair2.hint': 'Abra o Sensmos Store no outro computador. Ele mostra um código — escreva-o '
+        'aqui. Não vai precisar do telemóvel.',
+    'pair2.code': 'Código do outro computador',
+    'pair2.check': 'Verificar o código',
+    'pair2.asks': '„{name}” pede acesso à conta',
+    'pair2.pickHint': 'Escolha o que esse computador pode fazer. Pode retirá-lo a qualquer '
+        'momento no telemóvel, em Definições → Dispositivos emparelhados.',
+    'pair2.readFiles': 'Pode ler ficheiros',
+    'pair2.readFilesHint': 'Sem isto envia ficheiros e vê a lista, mas não abre um único nome — '
+        'nem sequer o seu próprio envio depois de reiniciar.',
+    'pair2.noSeed': 'Este computador não tem como passar o direito de leitura, porque também não '
+        'o tem. Emparelhe o outro computador a partir do telemóvel.',
+    'pair2.noChain': 'Um computador emparelhado a partir daqui não emparelha mais nenhum. Para '
+        'isso é preciso o telemóvel.',
+    'pair2.pair': 'Emparelhar',
+    'pair2.searching': 'A procurar…',
+    'pair2.pairing': 'A emparelhar…',
+    'pair2.done': 'Emparelhado. O outro computador deve abrir os seus ficheiros dentro de momentos.',
+    'pair2.noToken': 'o servidor não emitiu um token',
+    'pair2.noHandover': 'não foi possível entregar o token',
+    'pair2.noBox': 'este computador não tem a chave da conta',
+    'pair2.close': 'Fechar',
+    'menu.pairPc': 'Emparelhar outro computador',
+
     'menu.account': 'Conta',
     'menu.language': 'Idioma',
     'menu.hide': 'Ocultar na área de notificação',
@@ -855,6 +980,15 @@ const _slowniki = <String, Map<String, String>>{
     'nopkg.card': 'Sem pacote',
     'nopkg.cardBody': 'Compre espa\u00e7o para come\u00e7ar a guardar ficheiros aqui.',
     'nopkg.max': 'no m\u00e1ximo {n} GB neste momento',
+    'copies.label': 'Quantas cópias',
+    'copies.rec': '{n} · recomendado',
+    'copies.why': 'Um anfitrião que se cala só sai do pacote ao fim de três dias, e só então a '
+        'cópia é reconstruída noutro lado. Com duas cópias o ficheiro fica esse tempo num '
+        'único disco; com três, em dois.',
+    'copies.now': '{n} cópias de cada ficheiro',
+    'copies.rebuild': 'A reconstruir: {a} de {b} cópias no lugar',
+    'copies.done': 'Agora {n} cópias de cada ficheiro',
+    'busy.copies': 'A alterar o número de cópias…',
     'arrears.title': 'Envios em pausa \u2014 dias por pagar: {n}',
     'arrears.body': 'A taxa di\u00e1ria n\u00e3o passou. Carregue GALU \u2014 os envios recome\u00e7am ap\u00f3s um dia '
         'pago. Os seus ficheiros ficam exatamente onde est\u00e3o.',

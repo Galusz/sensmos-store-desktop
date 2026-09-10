@@ -56,7 +56,12 @@ class Pairing {
                           // Prosimy DOKLADNIE o to, czego ten program uzywa. Telefon pokaze
                           // wylacznie te pozycje — nie ma jak zaznaczyc tuneli „na wszelki
                           // wypadek", bo nikt o nie nie poprosil.
-                          'want': const ['store.use']}));
+                          //
+                          // `token.issue` to prawo wpuszczenia na konto KOLEJNEGO komputera bez
+                          // siegania po telefon. Prosimy, nie bierzemy: na telefonie sa to dwie
+                          // osobne pozycje i mozna dac same pliki. Bez tego zakresu ekran
+                          // „Sparuj kolejny komputer" po prostu sie nie pokazuje.
+                          'want': const ['store.use', 'token.issue']}));
     final o = jsonDecode(offer.body) as Map<String, dynamic>;
     if (o['ok'] != true) throw Exception(o['error'] ?? t('pair.refused'));
 
@@ -88,6 +93,117 @@ class Pairing {
 
   static Future<void> forget() async =>
       (await SharedPreferences.getInstance()).remove(_slot);
+}
+
+/// Parowanie KOLEJNEGO komputera — strona tego, który już siedzi na koncie.
+///
+/// Robi dokładnie to samo, co telefon: sprawdza, kto czeka pod kodem, wydaje token i odkłada go
+/// zapieczętowanego kluczem publicznym tamtego komputera. Różnica jest jedna — portfela tu nie ma,
+/// więc żądanie wydania tokenu uwierzytelnia nasz własny token.
+///
+/// Backend przepuszcza to wyłącznie z zakresem `token.issue`, przycina potomka do tego, co sami
+/// mamy, i ODBIERA mu prawo parowania dalej. Łańcuch ma więc zawsze jedno ogniwo: telefon →
+/// komputer. Odwołanie naszego tokenu z telefonu kasuje kaskadą wszystko, co tędy wydaliśmy.
+class DalszeParowanie {
+  /// Postać kanoniczna kodu — spacje, myślniki i wielkość liter nie mogą decydować o tym,
+  /// czy parowanie się uda.
+  static String normalizuj(String kod) =>
+      kod.toUpperCase().split('').where(Pairing.alphabet.contains).join();
+
+  static String _rv(String kod) => sha256
+      .convert(utf8.encode('sensmos:pair:${normalizuj(kod)}'))
+      .toString()
+      .substring(0, 32);
+
+  /// Czy ten komputer w ogóle może parować kolejne.
+  static bool wolno(Map<String, dynamic> moje) =>
+      ((moje['scopes'] as List?) ?? const []).map((e) => '$e').contains('token.issue');
+
+  /// Opisy uprawnień bierzemy z serwera, żeby ekran nie trzymał własnej kopii listy
+  /// i nie rozjechał się z tym, co backend naprawdę honoruje.
+  static Future<Map<String, String>> opisy(String be) async {
+    try {
+      final r = await http.get(Uri.parse('$be/v1/nodes/owner-token/scopes'))
+          .timeout(const Duration(seconds: 10));
+      final m = (jsonDecode(r.body) as Map<String, dynamic>)['scopes'] as Map<String, dynamic>;
+      return m.map((k, v) => MapEntry(k, '$v'));
+    } catch (_) {
+      return const {};   // bez opisów da się żyć, przy zaznaczaniu liczy się klucz
+    }
+  }
+
+  /// Kto czeka pod tym kodem: `{name, pub, want}`.
+  static Future<Map<String, dynamic>> ktoCzeka(String be, String kod) async {
+    final r = await http.get(Uri.parse('$be/v1/pair/${_rv(kod)}'))
+        .timeout(const Duration(seconds: 12));
+    final m = jsonDecode(r.body) as Map<String, dynamic>;
+    if (r.statusCode != 200 || m['ok'] != true) {
+      throw Exception(m['error'] ?? t('pair.expired'));
+    }
+    return m;
+  }
+
+  /// Wydaje token potomny i odkłada paczkę dla tamtego komputera.
+  ///
+  /// `czytaPliki` dokłada ziarno skrzynki, czyli prawo ODCZYTU. Przekazać je możemy tylko wtedy,
+  /// gdy sami je mamy — komputer wpuszczony bez prawa odczytu nie ma czego oddać.
+  static Future<void> sparuj({
+    required Map<String, dynamic> moje,
+    required String kod,
+    required List<String> zakresy,
+    required bool czytaPliki,
+    required String nazwa,
+  }) async {
+    final be = '${moje['be'] ?? Pairing.be}';
+    final info = await ktoCzeka(be, kod);
+
+    final res = await http.post(
+      Uri.parse('$be/v1/nodes/owner-token'),
+      headers: const {'Content-Type': 'application/json'},
+      body: jsonEncode({'owner_token': moje['token'], 'label': nazwa,
+                        'scopes': [...zakresy]..sort()}),
+    ).timeout(const Duration(seconds: 15));
+    final tok = jsonDecode(res.body) as Map<String, dynamic>;
+    if (res.statusCode != 200 || tok['token'] == null) {
+      throw Exception(tok['error'] ?? t('pair2.noToken'));
+    }
+
+    // Publiczna połowa skrzynki jedzie ZAWSZE — bez niej tamten komputer nie ma czym zaszyfrować
+    // wysyłki, nawet jeśli nie wolno mu niczego odczytać. Pisać można kluczem publicznym, czytać
+    // dopiero prywatnym; to jest cały sens przełącznika „może czytać pliki".
+    final ziarno = moje['box_seed'];
+    var pub = '${moje['box_pub'] ?? ''}';
+    if (pub.isEmpty && ziarno is String && ziarno.isNotEmpty) {
+      final kp = await StoreCrypto.boxFromSeed(Box._bytes(ziarno));
+      pub = StoreCrypto.pubHex(await kp.extractPublicKey());
+    }
+    if (pub.isEmpty) throw Exception(t('pair2.noBox'));
+
+    final paczka = <String, dynamic>{
+      'be': be,
+      'owner': moje['owner'],
+      'token': tok['token'],
+      'scopes': tok['scopes'] ?? zakresy,
+      'box_pub': pub,
+    };
+    if (czytaPliki && ziarno is String && ziarno.isNotEmpty) paczka['box_seed'] = ziarno;
+
+    final sealed = await StoreCrypto.sealTo(
+      StoreCrypto.pubFromHex(info['pub'] as String),
+      Uint8List.fromList(utf8.encode(jsonEncode(paczka))),
+      label: Pairing._label,
+      extra: utf8.encode(normalizuj(kod)),
+    );
+
+    final put = await http.post(Uri.parse('$be/v1/pair/seal'),
+            headers: const {'Content-Type': 'application/json'},
+            body: jsonEncode({'rendezvous': _rv(kod), 'blob': sealed}))
+        .timeout(const Duration(seconds: 15));
+    final done = jsonDecode(put.body) as Map<String, dynamic>;
+    if (put.statusCode != 200 || done['ok'] != true) {
+      throw Exception(done['error'] ?? t('pair2.noHandover'));
+    }
+  }
 }
 
 /// Skrzynka właściciela po stronie komputera.

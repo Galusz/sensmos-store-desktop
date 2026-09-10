@@ -82,8 +82,9 @@ class StoreRelay {
 
   /// addGb > 0 dokup, < 0 zmniejszenie, 0 = wykup/odczyt pakietu.
   /// gb = rozmiar przy zakładaniu pakietu (kupujący wybiera go suwakiem, nie zaczyna od 1 GB).
-  Future<Map<String, dynamic>> package({int addGb = 0, int gb = 0}) =>
-      _ask('package', {'type': 'package', if (addGb != 0) 'add_gb': addGb, if (gb > 0) 'gb': gb});
+  Future<Map<String, dynamic>> package({int addGb = 0, int gb = 0, int copies = 0}) =>
+      _ask('package', {'type': 'package', if (addGb != 0) 'add_gb': addGb, if (gb > 0) 'gb': gb,
+                       if (copies > 0) 'copies': copies});
   /// Jedna STRONA jednego katalogu, nie cała zawartość konta.
   ///
   /// `folderH` null = wszystkie pliki, '' = korzeń, inaczej konkretny katalog. Odpowiedź niesie
