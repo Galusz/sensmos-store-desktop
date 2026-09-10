@@ -231,7 +231,7 @@ class Session extends ChangeNotifier {
       } catch (_) { return; }
     }
     if (ile > 0) {
-      Dziennik.i.dodaj(Rodzaj.info, 'katalogi uzupełnione: $ile');
+      Dziennik.i.dodaj(Rodzaj.info, t('log.foldersFilled', {'n': ile}));
       await refresh();
     }
   }

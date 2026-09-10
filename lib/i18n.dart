@@ -102,6 +102,7 @@ const _slowniki = <String, Map<String, String>>{
     'pair2.noHandover': 'the token could not be handed over',
     'pair2.noBox': 'this computer has no account key',
     'pair2.close': 'Close',
+    'log.foldersFilled': 'folders filled in: {n}',
     'menu.pairPc': 'Pair another computer',
 
     'menu.account': 'Account',
@@ -368,6 +369,7 @@ const _slowniki = <String, Map<String, String>>{
     'pair2.noHandover': 'nie udało się przekazać tokenu',
     'pair2.noBox': 'ten komputer nie ma klucza konta',
     'pair2.close': 'Zamknij',
+    'log.foldersFilled': 'uzupełnione katalogi: {n}',
     'menu.pairPc': 'Sparuj kolejny komputer',
 
     'menu.account': 'Konto',
@@ -634,6 +636,7 @@ const _slowniki = <String, Map<String, String>>{
     'pair2.noHandover': 'das Token konnte nicht übergeben werden',
     'pair2.noBox': 'dieser Computer hat keinen Kontoschlüssel',
     'pair2.close': 'Schließen',
+    'log.foldersFilled': 'Ordner ergänzt: {n}',
     'menu.pairPc': 'Weiteren Computer koppeln',
 
     'menu.account': 'Konto',
@@ -900,6 +903,7 @@ const _slowniki = <String, Map<String, String>>{
     'pair2.noHandover': 'não foi possível entregar o token',
     'pair2.noBox': 'este computador não tem a chave da conta',
     'pair2.close': 'Fechar',
+    'log.foldersFilled': 'pastas preenchidas: {n}',
     'menu.pairPc': 'Emparelhar outro computador',
 
     'menu.account': 'Conta',
