@@ -1,0 +1,23 @@
+name: sensmos_store
+description: >-
+  Store SENSMOS — kryptografia plików i klient przekaźnika. Wspólne dla apki na telefon i klienta
+  na komputer, żeby X25519, HKDF i AES-GCM istniały w JEDNYM miejscu. Dwie kopie tego samego
+  rozjeżdżają się w ciągu roku, a rozjazd wychodzi dopiero wtedy, gdy komuś nie otwiera się plik.
+version: 1.0.0
+publish_to: none
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  crypto: ^3.0.3
+  cryptography: ^2.7.0
+  pointycastle: ^3.7.4
+  web_socket_channel: ^2.4.0
+  xml: ^6.6.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
