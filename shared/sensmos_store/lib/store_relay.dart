@@ -141,17 +141,17 @@ class StoreRelay {
     // i plik idzie przez serwer; kupujący nie ma z tego nic do wyboru i niczego nie zauważy.
     final dp = r['direct'] as Map?;
     if (dp != null) {
-      _log('I', 'wysyłka ${oid.substring(0, 8)} BEZPOŚREDNIO — ' + _how(dp));
+      _log('I', 'upload ${oid.substring(0, 8)} DIRECT — ' + _how(dp));
       final st = _expect('put_state');
       try {
         await _directSend(dp, cipher, size, onProgress);
         final s2 = await st.timeout(const Duration(minutes: 30));
         if (s2['st'] != 'ok') throw Exception(s2['msg'] ?? 'put failed');
         lastRoute = 'direct';
-        _log('I', 'wysłano bezpośrednio: $size B');
+        _log('I', 'sent directly: $size B');
         return s2;
       } catch (e) {
-        _log('W', 'bezpośrednio nie wyszło ($e) — powtarzam przez serwer');
+        _log('W', 'direct failed ($e) — retrying through the server');
         _events.add('direct-failed:$e');
         r = await _ask('put', {'type': 'put', 'object_id': oid, 'size': size, 'blocks': blocks,
             'sha256': sha256hex, 'wrapped_key': wrappedKey, 'name_enc': nameEnc,
@@ -159,7 +159,7 @@ class StoreRelay {
         if (r['ok'] != true) throw Exception(r['error'] ?? 'put refused');
       }
     }
-    if (dp == null) _log('I', 'wysyłka ${oid.substring(0, 8)} PRZEZ SERWER — serwer nie dał trasy bezpośredniej');
+    if (dp == null) _log('I', 'upload ${oid.substring(0, 8)} VIA SERVER — no direct route offered');
     lastRoute = 'relay';
     final sid = r['sid'] as int;
     var sent = 0;
@@ -189,21 +189,21 @@ class StoreRelay {
     if (r['ok'] != true) throw Exception(r['error'] ?? 'get refused');
     final dg = r['direct'] as Map?;
     if (dg != null) {
-      _log('I', 'pobieranie ${id.substring(0, 8)} BEZPOŚREDNIO — ' + _how(dg));
+      _log('I', 'download ${id.substring(0, 8)} DIRECT — ' + _how(dg));
       try {
         final n = await _directRecv(dg, out, onProgress);
         await _verify(out, r, id);
         lastRoute = 'direct';
-        _log('I', 'pobrano bezpośrednio: $n B, hashe zgodne');
+        _log('I', 'downloaded directly: $n B, hashes match');
         return {...r, 'bytes': n};
       } catch (e) {
-        _log('W', 'bezpośrednio nie wyszło ($e) — powtarzam przez serwer');
+        _log('W', 'direct failed ($e) — retrying through the server');
         _events.add('direct-failed:$e');
         r = await _ask('get', {'type': 'get', 'object_id': id, 'no_direct': true});
         if (r['ok'] != true) throw Exception(r['error'] ?? 'get refused');
       }
     } else {
-      _log('I', 'pobieranie ${id.substring(0, 8)} PRZEZ SERWER — serwer nie dał trasy bezpośredniej');
+      _log('I', 'download ${id.substring(0, 8)} VIA SERVER — no direct route offered');
     }
     lastRoute = 'relay';
     _getSid = r['sid'] as int; _getBytes = 0; _getProgress = onProgress;
@@ -213,15 +213,15 @@ class StoreRelay {
     await _getSink?.close(); _getSink = null; _getSid = -1;
     if (end['error'] != null) throw Exception(end['error']);
     await _verify(out, r, id);
-    _log('I', 'pobrano przez serwer: $_getBytes B, hashe zgodne');
+    _log('I', 'downloaded via server: $_getBytes B, hashes match');
     return {...r, 'bytes': _getBytes};
   }
 
   /// Kto do kogo dzwoni. Bez tego „bezpośrednio" w logu nie mówi, KTÓRA z dwóch dróg zadziałała,
   /// a to jedyna rzecz różniąca hosta z otwartym portem od telefonu z otwartym portem.
   String _how(Map d) => d['route'] == 'seller'
-      ? 'dzwonimy do sprzedawcy ${d['host']}:${d['port']}'
-      : 'sprzedawca zadzwoni do nas';
+      ? 'we call the seller ${d['host']}:${d['port']}'
+      : 'the seller will call us';
 
   /// Odebrany szyfrogram przeciw hashom, które ten telefon policzył i podpisał przy wysyłce.
   /// Ta sama funkcja licząca, co przy pakowaniu — jedna implementacja, nie druga obok.
@@ -237,10 +237,10 @@ class StoreRelay {
         List.generate(got.length, (i) => got[i].toLowerCase() != wantBlocks[i]).any((x) => x);
     if (!bad) return;
     try { await out.delete(); } catch (_) {}
-    _log('E', 'plik ${id.substring(0, 8)}: hashe NIE zgadzają się z podpisem — host oddał złe bajty');
+    _log('E', 'file ${id.substring(0, 8)}: hashes do NOT match the signature — the host served bad bytes');
     _send({'type': 'bad_copy', 'object_id': id});
-    throw Exception('Pobrany plik nie zgadza się z Twoim podpisem — host oddał złe dane. '
-        'Zgłosiliśmy to; spróbuj ponownie za chwilę, pobierze się z drugiej kopii.');
+    throw Exception('The downloaded file does not match your signature — the host served bad data. '
+        'We have reported it; try again in a moment and it will come from the other copy.');
   }
 
   // ── transfer bezpośredni ───────────────────────────────────────────────────
@@ -257,14 +257,14 @@ class StoreRelay {
         break;
       } catch (_) {/* zajęty */}
     }
-    if (_srv == null) { _log('W', 'nasłuch: nie udało się otworzyć portu — zostaje relay'); return; }
+    if (_srv == null) { _log('W', 'listen: could not open a port — staying on the relay'); return; }
     _srv!.listen(_onInbound, onError: (_) {});
-    _log('I', 'nasłuch na porcie ${_srv!.port}');
+    _log('I', 'listening on port ${_srv!.port}');
     try {
       final r = await _ask('listen', {'type': 'listen', 'port': _srv!.port});
       _probe = r['probe'] as String?;
-      _log('I', 'port zgłoszony serwerowi (${_probe == null ? "bez potwierdzenia" : "ok"})');
-    } catch (e) { _probe = null; _log('W', 'zgłoszenie portu nieudane: $e'); }
+      _log('I', 'port reported to the server (${_probe == null ? "unconfirmed" : "ok"})');
+    } catch (e) { _probe = null; _log('W', 'reporting the port failed: $e'); }
     // Router pytamy sami i bez flagi. Nie umie UPnP — trudno, zostają pozostałe trasy.
     unawaited(_mapPort());
     _upnpTimer ??= Timer.periodic(const Duration(minutes: 25), (_) => _mapPort());
@@ -275,8 +275,8 @@ class StoreRelay {
     if (srv == null) return;
     final ok = await Upnp.map(srv.port);
     _log('I', ok
-        ? 'UPnP: router przepuścił port ${srv.port}'
-        : 'UPnP: żaden router nie przyjął mapowania portu ${srv.port}');
+        ? 'UPnP: the router forwarded port ${srv.port}'
+        : 'UPnP: no router accepted a mapping for port ${srv.port}');
     _events.add(ok ? 'upnp:ok' : 'upnp:none');
   }
 
@@ -291,13 +291,13 @@ class StoreRelay {
       if (cmd.length != 2 || cmd[0] != 'x') { sock.destroy(); return; }
       final g = await _awaitGrant(cmd[1]);
       if (g == null) {
-        _log('W', 'połączenie z ${sock.remoteAddress.address}: nieznany numer transferu');
+        _log('W', 'connection from ${sock.remoteAddress.address}: unknown transfer id');
         sock.add(utf8.encode('err unknown number\n')); await sock.flush(); sock.destroy(); return;
       }
-      _log('I', 'sprzedawca zadzwonił z ${sock.remoteAddress.address} — transfer bezpośredni');
+      _log('I', 'the seller called in from ${sock.remoteAddress.address} — direct transfer');
       await g.run(w);
     } catch (e) {
-      _log('W', 'połączenie przychodzące nieudane: $e');
+      _log('W', 'incoming connection failed: $e');
       _events.add('direct-inbound-failed:$e');
     } finally {
       try { await sock.close(); } catch (_) {}
