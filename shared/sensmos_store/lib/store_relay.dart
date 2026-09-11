@@ -21,6 +21,18 @@ void _log(String poziom, String tresc) => storeLog?.call(poziom, 'store', tresc)
 ///
 /// Osobny typ, bo przerwania nie wolno pomylić z awarią: gdy trasa bezpośrednia się wywali,
 /// powtarzamy przez serwer — a wysyłki, z której ktoś świadomie zrezygnował, powtarzać nie ma po co.
+/// Wysyłka urwała się w połowie i NIE z woli człowieka — zerwane łącze, uśpiony komputer.
+/// Niesie identyfikator obiektu, bo bez niego nie da się do niej wrócić: wznowienie to ten sam
+/// obiekt, a nie nowy. Różnica wobec [UploadCancelled] jest po stronie backendu: po „zatrzymaj"
+/// wpis pliku znika i miejsce wraca do pakietu, po zerwaniu — zostaje, żeby było co dokończyć.
+class UploadInterrupted implements Exception {
+  final String objectId;
+  final int sent;
+  final Object cause;
+  const UploadInterrupted(this.objectId, this.sent, this.cause);
+  @override String toString() => 'upload interrupted after $sent B: $cause';
+}
+
 class UploadCancelled implements Exception {
   const UploadCancelled();
   @override
@@ -137,11 +149,14 @@ class StoreRelay {
   /// i sprawdza podpis, więc telefon nie ma jak podać cudzego właściciela.
   Future<Map<String, dynamic>> put({required File cipher, required int size, required List<String> blocks,
       required String sha256hex, required String wrappedKey, required String nameEnc,
-      String folderH = '', String folderEnc = '',
+      String folderH = '', String folderEnc = '', String? resumeOid,
       void Function(int sent)? onProgress}) async {
     const metaV = 1;
     _przerwane = false;
-    final oid = StoreCrypto.newObjectId();
+    // `resumeOid` = wracamy do wysyłki, która się urwała. Ten sam identyfikator i ten sam
+    // szyfrogram co poprzednio — inaczej kawałek leżący u sprzedawcy nie ma z czym się skleić.
+    // Od którego bajtu nadawać, mówi BACKEND w odpowiedzi; my tego nie zgadujemy.
+    final oid = resumeOid ?? StoreCrypto.newObjectId();
     final createdAt = DateTime.now().toUtc().toIso8601String();
     // Rekord podpisuje ten, kto ma czym: telefon portfelem, a za sparowane urzadzenie — backend.
     // Klucz portfela nie opuszcza telefonu, wiec innej mozliwosci nie ma i nie powinno byc.
@@ -152,10 +167,18 @@ class StoreRelay {
     var r = await _ask('put', {'type': 'put', 'object_id': oid, 'size': size, 'blocks': blocks,
         'sha256': sha256hex, 'wrapped_key': wrappedKey, 'name_enc': nameEnc,
         'meta_v': metaV, 'created_at': createdAt, 'meta_sig': sig,
+        if (resumeOid != null) 'resume': true,
         // Katalog jedzie OBOK podpisanej nazwy, nie zamiast niej — inaczej podpis w `.meta`
         // przestałby się zgadzać z tym, co leży na hoście.
         'folder_h': folderH, 'folder_enc': folderEnc});
     if (r['ok'] != true) throw Exception(r['error'] ?? 'put refused');
+    // Pierwsza próba jednak doszła do końca — zerwało się tuż przed potwierdzeniem.
+    if (r['done'] == true) { onProgress?.call(size); return {'st': 'ok', 'object_id': oid}; }
+    var od = (r['from'] as int?) ?? 0;
+    if (od > 0) {
+      onProgress?.call(od);
+      _log('I', 'upload ${oid.substring(0, 8)} resuming at $od B');
+    }
     // Bajty bokiem, jeśli BE tak zdecydował. Nie udało się — powtarzamy żądanie z `no_direct`
     // i plik idzie przez serwer; kupujący nie ma z tego nic do wyboru i niczego nie zauważy.
     final dp = r['direct'] as Map?;
@@ -163,7 +186,7 @@ class StoreRelay {
       _log('I', 'upload ${oid.substring(0, 8)} DIRECT — ' + _how(dp));
       final st = _expect('put_state');
       try {
-        await _directSend(dp, cipher, size, onProgress);
+        await _directSend(dp, cipher, size, onProgress, od);
         final s2 = await st.timeout(const Duration(minutes: 30));
         if (s2['st'] != 'ok') throw Exception(s2['msg'] ?? 'put failed');
         lastRoute = 'direct';
@@ -175,18 +198,23 @@ class StoreRelay {
       } catch (e) {
         _log('W', 'direct failed ($e) — retrying through the server');
         _events.add('direct-failed:$e');
+        // Ta sama wysyłka, druga trasa. Jeśli pierwsza zdążyła coś dowieźć, backend policzy
+        // przesunięcie od nowa — dlatego `resume` idą tu zawsze, gdy obiekt już istnieje.
         r = await _ask('put', {'type': 'put', 'object_id': oid, 'size': size, 'blocks': blocks,
             'sha256': sha256hex, 'wrapped_key': wrappedKey, 'name_enc': nameEnc,
-            'meta_v': metaV, 'created_at': createdAt, 'meta_sig': sig, 'no_direct': true});
+            'meta_v': metaV, 'created_at': createdAt, 'meta_sig': sig,
+            'resume': true, 'no_direct': true});
         if (r['ok'] != true) throw Exception(r['error'] ?? 'put refused');
+        if (r['done'] == true) { onProgress?.call(size); return {'st': 'ok', 'object_id': oid}; }
+        od = (r['from'] as int?) ?? 0;
       }
     }
     if (dp == null) _log('I', 'upload ${oid.substring(0, 8)} VIA SERVER — no direct route offered');
     lastRoute = 'relay';
     final sid = r['sid'] as int;
-    var sent = 0;
+    var sent = od;
     Stream<List<int>> frames() async* {
-      await for (final part in cipher.openRead()) {
+      await for (final part in cipher.openRead(od)) {
         if (_przerwane) throw const UploadCancelled();
         for (var off = 0; off < part.length; off += 256 * 1024) {
           final n = part.length - off < 256 * 1024 ? part.length - off : 256 * 1024;
@@ -203,23 +231,38 @@ class StoreRelay {
     } on UploadCancelled {
       await _zglosPrzerwanie(oid);
       rethrow;
+    } catch (e) {
+      throw UploadInterrupted(oid, sent, e);
     }
     _send({'type': 'put_end', 'sid': sid});
     final st = await state.timeout(const Duration(minutes: 10));
-    if (st['st'] != 'ok') throw Exception(st['msg'] ?? 'put failed');
+    if (st['st'] != 'ok') throw UploadInterrupted(oid, sent, st['msg'] ?? 'put failed');
     return st;
   }
 
   /// Pobranie szyfrogramu do pliku `out`. Zwraca metadane (rozmiar, klucz zapakowany, nazwa).
-  Future<Map<String, dynamic>> get(String id, File out, {void Function(int got)? onProgress}) async {
+  /// `from` — ile tego pliku już leży w `out` z przerwanego pobierania. Musi stać na granicy
+  /// bloku dowodowego; backend odpowiada, ile naprawdę przyśle — sprzedawca na starszym agencie
+  /// nie umie przewinąć i wtedy plik idzie od początku, o czym dowiadujemy się z odpowiedzi.
+  Future<Map<String, dynamic>> get(String id, File out, {int from = 0, void Function(int got)? onProgress}) async {
     await _ensureListener();
-    var r = await _ask('get', {'type': 'get', 'object_id': id});
+    var r = await _ask('get', {'type': 'get', 'object_id': id, if (from > 0) 'from': from});
     if (r['ok'] != true) throw Exception(r['error'] ?? 'get refused');
+    // Ile backend FAKTYCZNIE pomija. Ogon niepełnego bloku obcinamy, żeby bajty skleiły się
+    // dokładnie w tym miejscu, w którym host zacznie nadawać.
+    var od = (r['from'] as int?) ?? 0;
+    if (od > 0) {
+      final f = await out.open(mode: FileMode.append);
+      try { await f.truncate(od); } finally { await f.close(); }
+      onProgress?.call(od);
+    } else if (await out.exists()) {
+      try { await out.delete(); } catch (_) {}
+    }
     final dg = r['direct'] as Map?;
     if (dg != null) {
       _log('I', 'download ${id.substring(0, 8)} DIRECT — ' + _how(dg));
       try {
-        final n = await _directRecv(dg, out, onProgress);
+        final n = await _directRecv(dg, out, onProgress, od);
         await _verify(out, r, id);
         lastRoute = 'direct';
         _log('I', 'downloaded directly: $n B, hashes match');
@@ -227,15 +270,17 @@ class StoreRelay {
       } catch (e) {
         _log('W', 'direct failed ($e) — retrying through the server');
         _events.add('direct-failed:$e');
-        r = await _ask('get', {'type': 'get', 'object_id': id, 'no_direct': true});
+        r = await _ask('get', {'type': 'get', 'object_id': id, 'no_direct': true,
+            if (from > 0) 'from': from});
         if (r['ok'] != true) throw Exception(r['error'] ?? 'get refused');
+        od = (r['from'] as int?) ?? 0;
       }
     } else {
       _log('I', 'download ${id.substring(0, 8)} VIA SERVER — no direct route offered');
     }
     lastRoute = 'relay';
-    _getSid = r['sid'] as int; _getBytes = 0; _getProgress = onProgress;
-    _getSink = out.openWrite();
+    _getSid = r['sid'] as int; _getBytes = od; _getProgress = onProgress;
+    _getSink = out.openWrite(mode: od > 0 ? FileMode.append : FileMode.write);
     _getDone = Completer();
     final end = await _getDone!.future.timeout(const Duration(minutes: 10));
     await _getSink?.close(); _getSink = null; _getSid = -1;
@@ -352,11 +397,13 @@ class StoreRelay {
     _log('I', 'upload ${oid.substring(0, 8)} cancelled by you');
   }
 
-  Future<void> _directSend(Map d, File cipher, int size, void Function(int)? onProgress) async {
+  /// `od` — od którego bajtu. Zero znaczy „całość" i wtedy linia powitalna wygląda dokładnie
+  /// tak, jak wyglądała zawsze; słowo `from` widzi wyłącznie agent, który o wznowienie prosił.
+  Future<void> _directSend(Map d, File cipher, int size, void Function(int)? onProgress, [int od = 0]) async {
     Future<void> body(_Wire w) async {
-      w.sock.add(utf8.encode('len $size\n'));
-      var sent = 0;
-      await for (final part in cipher.openRead()) {
+      w.sock.add(utf8.encode(od > 0 ? 'len $size from $od\n' : 'len $size\n'));
+      var sent = od;
+      await for (final part in cipher.openRead(od)) {
         if (_przerwane) throw const UploadCancelled();
         w.sock.add(part); sent += part.length; onProgress?.call(sent);
         await w.sock.flush();
@@ -367,15 +414,15 @@ class StoreRelay {
     await _route(d, body);
   }
 
-  Future<int> _directRecv(Map d, File out, void Function(int)? onProgress) async {
+  Future<int> _directRecv(Map d, File out, void Function(int)? onProgress, [int od = 0]) async {
     var got = 0;
     Future<void> body(_Wire w) async {
       final head = (await w.line()).split(' ');
-      if (head.length != 2 || head[0] != 'len') throw Exception(head.join(' '));
+      if (head.length < 2 || head[0] != 'len') throw Exception(head.join(' '));
       final size = int.parse(head[1]);
-      final sink = out.openWrite();
+      final sink = out.openWrite(mode: od > 0 ? FileMode.append : FileMode.write);
       try {
-        got = await w.drainTo(sink, size, onProgress);
+        got = od + await w.drainTo(sink, size - od, onProgress, od);
       } finally { await sink.close(); }
       if (got != size) throw Exception('got $got of $size bytes');
       w.sock.add(utf8.encode('ok $got\n'));
@@ -490,18 +537,20 @@ class _Wire {
     }
   }
 
-  Future<int> drainTo(IOSink out, int size, void Function(int)? progress) async {
+  /// `baza` — ile tego pliku leży już na dysku z przerwanego pobierania. Liczymy od zera, ale
+  /// człowiekowi pokazujemy całość, inaczej pasek postępu cofnąłby się przy wznowieniu.
+  Future<int> drainTo(IOSink out, int size, void Function(int)? progress, [int baza = 0]) async {
     var got = 0;
     if (_buf.isNotEmpty) {                       // reszta, która przyszła razem z nagłówkiem
       final take = _buf.length > size ? size : _buf.length;
       out.add(Uint8List.fromList(_buf.sublist(0, take)));
       _buf.removeRange(0, take);
-      got += take; progress?.call(got);
+      got += take; progress?.call(baza + got);
     }
     while (got < size && await _it.moveNext()) {
       var b = _it.current;
       if (got + b.length > size) b = Uint8List.sublistView(b, 0, size - got);
-      out.add(b); got += b.length; progress?.call(got);
+      out.add(b); got += b.length; progress?.call(baza + got);
     }
     return got;
   }

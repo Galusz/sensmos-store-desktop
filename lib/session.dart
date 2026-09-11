@@ -176,12 +176,7 @@ class Session extends ChangeNotifier {
     try {
       await _wczytajWLocie();
       box = await Box.from(pairing);
-      relay = StoreRelay.paired(
-        owner: pairing['owner'] as String,
-        beUrl: (pairing['be'] as String?) ?? Pairing.be,
-        token: pairing['token'] as String,
-      );
-      await relay!.connect();
+      await _polacz();
       connected = true;
       error = null;
       await refresh();
@@ -192,6 +187,18 @@ class Session extends ChangeNotifier {
       error = '$e';
       notifyListeners();
     }
+  }
+
+  /// Jedyne miejsce, w którym powstaje połączenie ze sklepem. Używa go i pierwsze zalogowanie,
+  /// i powrót po zerwanym łączu — dwa różne sposoby łączenia rozjechałyby się przy pierwszej
+  /// zmianie parowania.
+  Future<void> _polacz() async {
+    relay = StoreRelay.paired(
+      owner: pairing['owner'] as String,
+      beUrl: (pairing['be'] as String?) ?? Pairing.be,
+      token: pairing['token'] as String,
+    );
+    await relay!.connect();
   }
 
   Future<void> refresh() async {
@@ -260,15 +267,30 @@ class Session extends ChangeNotifier {
     try {
       final size = await enc.length();
       final ziarno = box?.seed;
-      await relay!.put(
-        cipher: enc, size: size, blocks: blocks, sha256hex: digest,
-        wrappedKey: await StoreCrypto.wrapDek(dek, box!.pub),
-        nameEnc: StoreCrypto.encryptName(dek, nazwa),
-        // Odcisk katalogu idzie OBOK podpisanej nazwy — po nim serwer grupuje i stronicuje.
-        folderH: ziarno == null ? '' : StoreCrypto.folderHash(ziarno, folder),
-        folderEnc: ziarno == null ? '' : StoreCrypto.encryptFolder(ziarno, folder),
-        onProgress: (s) => onProgress?.call(size > 0 ? s / size : 0),
-      );
+      // Wysyłka urwana nie przez człowieka dostaje jeszcze dwie szanse. Bajty, które doszły,
+      // leżą u sprzedawcy, a ten sam szyfrogram mamy jeszcze pod ręką — wracamy więc do TEJ
+      // SAMEJ wysyłki zamiast zaczynać nowej. Dalej to już nie jest chwilowe zerwanie łącza.
+      String? wznow;
+      for (var proba = 0; ; proba++) {
+        try {
+          await relay!.put(
+            cipher: enc, size: size, blocks: blocks, sha256hex: digest,
+            wrappedKey: await StoreCrypto.wrapDek(dek, box!.pub),
+            nameEnc: StoreCrypto.encryptName(dek, nazwa),
+            // Odcisk katalogu idzie OBOK podpisanej nazwy — po nim serwer grupuje i stronicuje.
+            folderH: ziarno == null ? '' : StoreCrypto.folderHash(ziarno, folder),
+            folderEnc: ziarno == null ? '' : StoreCrypto.encryptFolder(ziarno, folder),
+            resumeOid: wznow,
+            onProgress: (s) => onProgress?.call(size > 0 ? s / size : 0),
+          );
+          break;
+        } on UploadInterrupted catch (e) {
+          if (proba >= 2) rethrow;
+          wznow = e.objectId;
+          Dziennik.i.dodaj(Rodzaj.blad, t('log.resume', {'f': nazwa}));
+          try { await _polacz(); } catch (_) { rethrow; }
+        }
+      }
       lastRoute = relay!.lastRoute;
       wLocie.remove(nazwa);
       await _zapiszWLocie();
