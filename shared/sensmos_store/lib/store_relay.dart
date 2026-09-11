@@ -40,6 +40,9 @@ class UploadCancelled implements Exception {
 }
 
 class StoreRelay {
+  /// Co tyle bajtów wysyłka oddaje gniazdo, żeby przepuścić komendy. Cztery ramki: przy
+  /// wolnym łączu to ułamek sekundy zwłoki dla „odśwież”, a przy szybkim — niezauważalne.
+  static const _odcinekB = 1024 * 1024;
   final String owner;                                       // lower-case, tak porównuje BE
   final Future<String> Function(String message) signMessage;
   /// Publiczna połowa skrzynki właściciela. Serwer ją zapamiętuje, żeby archiwizator pomiarów
@@ -68,11 +71,26 @@ class StoreRelay {
   WebSocketChannel? _ch;
   StreamSubscription? _sub;
   final _waiting = <String, Completer<Map<String, dynamic>>>{};   // typ odpowiedzi → oczekujący
+
+  /// Gniazdo jest JEDNO na sterowanie i na bajty plików, więc trzeba wiedzieć, kiedy akurat
+  /// leci przez nie plik: Dart odrzuca wtedy wszystko inne wyjątkiem, a komenda przepada.
+  bool _zajete = false;
+  final _kolejka = <String>[];      // komendy, które czekają na wolne gniazdo
+  bool _zywe = false;               // czy połączenie w ogóle stoi
+
+  /// Czy da się teraz cokolwiek wysłać. Bez tego apka wygląda na podłączoną po zerwaniu
+  /// łącza i każda komenda kończy się minutą ciszy zamiast błędem.
+  bool get zywe => _zywe;
   IOSink? _getSink; int _getSid = -1, _getBytes = 0;
   void Function(int)? _getProgress;
   Completer<Map<String, dynamic>>? _getDone;
   final _events = StreamController<String>.broadcast();
   Stream<String> get events => _events.stream;
+
+  /// Zdarzenia zgłaszamy WYŁĄCZNIE tą drogą: robota w tle (UPnP, nasłuch) potrafi
+  /// wrócić po zamknięciu apki, a wtedy zapis do zamkniętego strumienia wywracał się
+  /// wyjątkiem, którego nikt nie łapał.
+  void _zdarzenie(String e) { if (!_events.isClosed) _events.add(e); }
 
   /// Nasłuch dla transferów bezpośrednich. Serwer wybiera trasę, ale jeśli to sprzedawca ma
   /// zadzwonić do nas, musimy mieć gdzie odebrać. Port efemeryczny — nikt go nie konfiguruje,
@@ -97,8 +115,10 @@ class StoreRelay {
   String get _wsUrl => '${beUrl.replaceFirst('https://', 'wss://').replaceFirst('http://', 'ws://')}/v1/store';
 
   Future<void> connect() async {
+    _zywe = false; _zajete = false; _kolejka.clear();
     _ch = WebSocketChannel.connect(Uri.parse(_wsUrl));
     _sub = _ch!.stream.listen(_onMessage, onError: (e) => _fail('$e'), onDone: () => _fail('connection closed'));
+    _zywe = true;                     // gniazdo stoi; auth jest dopiero pierwsza komenda
     Map<String, dynamic> r;
     if (token != null) {
       r = await _ask('auth', {'type': 'auth', 'token': token});
@@ -193,11 +213,15 @@ class StoreRelay {
         _log('I', 'sent directly: $size B');
         return s2;
       } on UploadCancelled {
+        // Oczekiwanie na potwierdzenie ginie razem z wysyłką. Zostawione wracało po minucie
+        // jako „TimeoutException: put_state" — błąd, którego nie było.
+        _anuluj('put_state'); st.catchError((_) => <String, dynamic>{});
         await _zglosPrzerwanie(oid);
         rethrow;
       } catch (e) {
+        _anuluj('put_state'); st.catchError((_) => <String, dynamic>{});
         _log('W', 'direct failed ($e) — retrying through the server');
-        _events.add('direct-failed:$e');
+        _zdarzenie('direct-failed:$e');
         // Ta sama wysyłka, druga trasa. Jeśli pierwsza zdążyła coś dowieźć, backend policzy
         // przesunięcie od nowa — dlatego `resume` idą tu zawsze, gdy obiekt już istnieje.
         r = await _ask('put', {'type': 'put', 'object_id': oid, 'size': size, 'blocks': blocks,
@@ -227,11 +251,13 @@ class StoreRelay {
     }
     final state = _expect('put_state');
     try {
-      await _ch!.sink.addStream(frames());
+      await _wyslijRamki(frames());
     } on UploadCancelled {
+      _anuluj('put_state'); state.catchError((_) => <String, dynamic>{});
       await _zglosPrzerwanie(oid);
       rethrow;
     } catch (e) {
+      _anuluj('put_state'); state.catchError((_) => <String, dynamic>{});
       throw UploadInterrupted(oid, sent, e);
     }
     _send({'type': 'put_end', 'sid': sid});
@@ -269,7 +295,7 @@ class StoreRelay {
         return {...r, 'bytes': n};
       } catch (e) {
         _log('W', 'direct failed ($e) — retrying through the server');
-        _events.add('direct-failed:$e');
+        _zdarzenie('direct-failed:$e');
         r = await _ask('get', {'type': 'get', 'object_id': id, 'no_direct': true,
             if (from > 0) 'from': from});
         if (r['ok'] != true) throw Exception(r['error'] ?? 'get refused');
@@ -350,7 +376,7 @@ class StoreRelay {
     _log('I', ok
         ? 'UPnP: the router forwarded port ${srv.port}'
         : 'UPnP: no router accepted a mapping for port ${srv.port}');
-    _events.add(ok ? 'upnp:ok' : 'upnp:none');
+    _zdarzenie(ok ? 'upnp:ok' : 'upnp:none');
   }
 
   Future<void> _onInbound(Socket sock) async {
@@ -371,7 +397,7 @@ class StoreRelay {
       await g.run(w);
     } catch (e) {
       _log('W', 'incoming connection failed: $e');
-      _events.add('direct-inbound-failed:$e');
+      _zdarzenie('direct-inbound-failed:$e');
     } finally {
       try { await sock.close(); } catch (_) {}
     }
@@ -456,12 +482,78 @@ class StoreRelay {
   }
 
   // ── plumbing ──
-  Future<Map<String, dynamic>> _ask(String type, Map<String, dynamic> m) { final f = _expect(type); _send(m); return f; }
+  Future<Map<String, dynamic>> _ask(String type, Map<String, dynamic> m) {
+    final f = _expect(type);
+    try {
+      _send(m);
+    } catch (e) {
+      _anuluj(type);
+      f.catchError((_) => <String, dynamic>{});     // to oczekiwanie już nikogo nie obchodzi
+      return Future.error(e);
+    }
+    return f;
+  }
   Future<Map<String, dynamic>> _expect(String type) {
     final c = Completer<Map<String, dynamic>>(); _waiting[type] = c;
     return c.future.timeout(const Duration(seconds: 60), onTimeout: () { _waiting.remove(type); throw TimeoutException(type); });
   }
-  void _send(Map<String, dynamic> m) { try { _ch?.sink.add(jsonEncode(m)); } catch (_) {} }
+  /// Wysłanie komendy. Trzy stany, trzy różne odpowiedzi — i żadna z nich nie jest ciszą.
+  ///
+  /// Wcześniej było tu `catch (_) {}`, więc komenda wysłana w trakcie wysyłki pliku znikała
+  /// bez śladu (Dart rzuca wówczas „StreamSink is bound to a stream"), a wywołujący czekał
+  /// minę na odpowiedź, której nikt nigdy nie miał wysłać. Awaria wyglądała jak powolność
+  /// serwera i tam też jej szukaliśmy.
+  void _send(Map<String, dynamic> m) {
+    if (!_zywe || _ch == null) throw StateError('not connected');
+    if (_zajete) { _kolejka.add(jsonEncode(m)); return; }   // pójdzie między odcinkami pliku
+    _ch!.sink.add(jsonEncode(m));
+  }
+
+  void _oproznijKolejke() {
+    if (_zajete || !_zywe || _ch == null) return;
+    while (_kolejka.isNotEmpty) { _ch!.sink.add(_kolejka.removeAt(0)); }
+  }
+
+  /// Przestajemy czekać na odpowiedź, której już nie potrzebujemy — bo człowiek nacisnął
+  /// „zatrzymaj" albo transfer poszedł inną trasą. Bez tego takie oczekiwanie wisi minutę
+  /// i wraca do dziennika jako „TimeoutException", choć nic złego się nie stało.
+  void _anuluj(String type) {
+    final c = _waiting.remove(type);
+    if (c != null && !c.isCompleted) c.completeError(StateError('porzucone: $type'));
+  }
+
+  /// Ramki pliku idą ODCINKAMI, nie jednym strumieniem na cały plik.
+  ///
+  /// `addStream` trzyma gniazdo na wyłączność od pierwszego bajtu do ostatniego — przy pliku
+  /// na kilka gigabajtów to kwadranse, w których każde odswieżenie listy czy kasowanie jest
+  /// odrzucane. Odcinek kończy się co [_odcinekB], gniazdo na moment wraca do nas i kolejka
+  /// wychodzi. Hamowanie zostaje, bo wewnątrz odcinka nadal pracuje `addStream`: bez niego
+  /// szybki dysk wpycha cały plik do pamięci, kiedy sieć nie nadąża.
+  Future<void> _wyslijRamki(Stream<List<int>> ramki) async {
+    final it = StreamIterator(ramki);
+    var koniec = false;
+    try {
+      while (!koniec) {
+        var wOdcinku = 0;
+        Stream<List<int>> odcinek() async* {
+          while (wOdcinku < _odcinekB) {
+            if (!await it.moveNext()) { koniec = true; return; }
+            wOdcinku += it.current.length;
+            yield it.current;
+          }
+        }
+        _zajete = true;
+        try {
+          await _ch!.sink.addStream(odcinek());
+        } finally {
+          _zajete = false;
+          _oproznijKolejke();
+        }
+      }
+    } finally {
+      await it.cancel();
+    }
+  }
 
   void _onMessage(dynamic raw) {
     if (raw is! String) {
@@ -482,7 +574,13 @@ class StoreRelay {
   }
 
   void _fail(String msg) {
-    if (!_events.isClosed) _events.add('down:$msg');
+    // Od tej chwili gniazdo jest martwe i mówimy to wprost. Wcześniej nikt tego nie zapisywał,
+    // więc apka wyglądała na podłączoną, a każda komenda kończyła się minutą ciszy — i tak
+    // aż do restartu.
+    _zywe = false;
+    _zajete = false;
+    _kolejka.clear();
+    _zdarzenie('down:$msg');
     for (final c in _waiting.values) { if (!c.isCompleted) c.completeError(Exception(msg)); }
     _waiting.clear();
     if (_getDone != null && !_getDone!.isCompleted) _getDone!.complete({'error': msg});

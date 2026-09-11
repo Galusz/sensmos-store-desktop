@@ -26,6 +26,9 @@ class Session extends ChangeNotifier {
   int sellers = 0;
   String? error;
   bool connected = false;
+  StreamSubscription? _zdarzenia;   // nasłuch zerwania łącza
+  Timer? _powrot;                   // zaplanowana próba powrotu
+  int _proba = 0;
   /// Trasa ostatniego transferu — 'direct' albo 'relay'. Widać ją w pasku stanu.
   String lastRoute = '';
 
@@ -177,6 +180,8 @@ class Session extends ChangeNotifier {
       await _wczytajWLocie();
       box = await Box.from(pairing);
       await _polacz();
+      _proba = 0;
+      _powrot?.cancel();
       connected = true;
       error = null;
       await refresh();
@@ -193,12 +198,46 @@ class Session extends ChangeNotifier {
   /// i powrót po zerwanym łączu — dwa różne sposoby łączenia rozjechałyby się przy pierwszej
   /// zmianie parowania.
   Future<void> _polacz() async {
+    await _zdarzenia?.cancel();
     relay = StoreRelay.paired(
       owner: pairing['owner'] as String,
       beUrl: (pairing['be'] as String?) ?? Pairing.be,
       token: pairing['token'] as String,
     );
     await relay!.connect();
+    // Zerwanego łącza nikt wcześniej nie słuchał, więc apka zostawała „połączona", a każda
+    // komenda kończyła się minutą ciszy i błędem — i tak aż do restartu.
+    _zdarzenia = relay!.events.listen((e) {
+      if (!e.startsWith('down:') || !connected) return;
+      connected = false;
+      error = t('conn.lost');
+      Dziennik.i.dodaj(Rodzaj.blad, t('conn.lost'));
+      notifyListeners();
+      _zaplanujPowrot();
+    });
+  }
+
+  /// Powrót po zerwaniu: próbuje coraz rzadziej, żeby przy dłuższej awarii nie dobijać się
+  /// co sekundę, i sam odswieża listę, gdy się uda.
+  void _zaplanujPowrot() {
+    _powrot?.cancel();
+    const odstepy = [2, 5, 10, 20, 30];
+    final ile = odstepy[_proba < odstepy.length ? _proba : odstepy.length - 1];
+    _proba++;
+    _powrot = Timer(Duration(seconds: ile), () async {
+      try {
+        await _polacz();
+        _proba = 0;
+        connected = true;
+        error = null;
+        Dziennik.i.dodaj(Rodzaj.info, t('conn.back'));
+        await refresh();
+        await odswiezStan();
+        notifyListeners();
+      } catch (_) {
+        _zaplanujPowrot();
+      }
+    });
   }
 
   Future<void> refresh() async {
@@ -416,7 +455,13 @@ class Session extends ChangeNotifier {
   static String _base(String p) => p.split(Platform.pathSeparator).last.split('/').last;
 
   @override
-  void dispose() { _sprzatnijMedia(); relay?.dispose(); super.dispose(); }
+  void dispose() {
+    _powrot?.cancel();
+    _zdarzenia?.cancel();
+    _sprzatnijMedia();
+    relay?.dispose();
+    super.dispose();
+  }
 }
 
 /// Jeden plik w pakiecie. `name` puste = nie mamy prawa czytania albo rekord jest sprzed nazw.
