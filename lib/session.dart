@@ -109,6 +109,14 @@ class Session extends ChangeNotifier {
     return r;
   }
 
+  /// Powiększenie albo zmniejszenie pakietu o pełne gigabajty. Ta sama wiadomość, którą wysyła
+  /// telefon — backend umiał to od dawna, brakowało wyłącznie przycisków po tej stronie.
+  Future<Map<String, dynamic>> zmienRozmiar(int oGb) async {
+    final r = await relay!.package(addGb: oGb);
+    if (r['ok'] == true) { await odswiezStan(); await refresh(); }
+    return r;
+  }
+
   /// Zmiana liczby kopii wykupionego pakietu. W górę serwer dobiera sprzedawcę od razu i sam
   /// odmawia, gdy nie ma z kogo — wtedy oddajemy jego powód, bo tylko on wie, czego zabrakło.
   Future<Map<String, dynamic>> ustawKopie(int kopii) async {
@@ -116,6 +124,10 @@ class Session extends ChangeNotifier {
     if (r['ok'] == true) { await odswiezStan(); await refresh(); }
     return r;
   }
+
+  /// „Zatrzymaj" w trakcie wysyłki. Przerywa bieżący plik i mówi o tym backendowi, żeby
+  /// sprzątnął wpis i oddał miejsce w pakiecie. Tego, co już doszło, nie cofa.
+  void przerwij() => relay?.przerwijWysylke();
 
   bool get canRead => box?.canRead ?? false;
   double get usedRatio => limitB > 0 ? usedB / limitB : 0;

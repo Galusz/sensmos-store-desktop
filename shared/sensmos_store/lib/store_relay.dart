@@ -17,6 +17,16 @@ void _log(String poziom, String tresc) => storeLog?.call(poziom, 'store', tresc)
 ///
 /// Wysyłka idzie przez `sink.addStream`, bo tylko tak gniazdo dart:io przenosi backpressure
 /// z TCP na nasz strumień: plik większy niż RAM telefonu nie zbiera się w buforze.
+/// Rzucane, gdy człowiek PRZERWAŁ wysyłkę.
+///
+/// Osobny typ, bo przerwania nie wolno pomylić z awarią: gdy trasa bezpośrednia się wywali,
+/// powtarzamy przez serwer — a wysyłki, z której ktoś świadomie zrezygnował, powtarzać nie ma po co.
+class UploadCancelled implements Exception {
+  const UploadCancelled();
+  @override
+  String toString() => 'upload cancelled';
+}
+
 class StoreRelay {
   final String owner;                                       // lower-case, tak porównuje BE
   final Future<String> Function(String message) signMessage;
@@ -63,6 +73,14 @@ class StoreRelay {
   static const int directPort = 9034;
   /// Trasa ostatniego transferu — 'direct' albo 'relay'. Do pokazania w apce.
   String lastRoute = '';
+
+  /// Ustawiane przez `przerwijWysylke()`, sprawdzane MIĘDZY porcjami bajtów. Nie przerywamy
+  /// w środku porcji — chodzi o to, żeby przestać wysyłać, a nie żeby zostawić urwany kadłubek.
+  bool _przerwane = false;
+
+  /// „Zatrzymaj" przy wysyłce. Działa na obu trasach: przez serwer i wprost do sprzedawcy.
+  /// Po przerwaniu mówimy o tym backendowi, żeby sprzątnął wpis i oddał miejsce w pakiecie.
+  void przerwijWysylke() => _przerwane = true;
 
   String get _wsUrl => '${beUrl.replaceFirst('https://', 'wss://').replaceFirst('http://', 'ws://')}/v1/store';
 
@@ -122,6 +140,7 @@ class StoreRelay {
       String folderH = '', String folderEnc = '',
       void Function(int sent)? onProgress}) async {
     const metaV = 1;
+    _przerwane = false;
     final oid = StoreCrypto.newObjectId();
     final createdAt = DateTime.now().toUtc().toIso8601String();
     // Rekord podpisuje ten, kto ma czym: telefon portfelem, a za sparowane urzadzenie — backend.
@@ -150,6 +169,9 @@ class StoreRelay {
         lastRoute = 'direct';
         _log('I', 'sent directly: $size B');
         return s2;
+      } on UploadCancelled {
+        await _zglosPrzerwanie(oid);
+        rethrow;
       } catch (e) {
         _log('W', 'direct failed ($e) — retrying through the server');
         _events.add('direct-failed:$e');
@@ -165,6 +187,7 @@ class StoreRelay {
     var sent = 0;
     Stream<List<int>> frames() async* {
       await for (final part in cipher.openRead()) {
+        if (_przerwane) throw const UploadCancelled();
         for (var off = 0; off < part.length; off += 256 * 1024) {
           final n = part.length - off < 256 * 1024 ? part.length - off : 256 * 1024;
           final f = Uint8List(2 + n)..buffer.asByteData().setUint16(0, sid);
@@ -175,7 +198,12 @@ class StoreRelay {
       }
     }
     final state = _expect('put_state');
-    await _ch!.sink.addStream(frames());
+    try {
+      await _ch!.sink.addStream(frames());
+    } on UploadCancelled {
+      await _zglosPrzerwanie(oid);
+      rethrow;
+    }
     _send({'type': 'put_end', 'sid': sid});
     final st = await state.timeout(const Duration(minutes: 10));
     if (st['st'] != 'ok') throw Exception(st['msg'] ?? 'put failed');
@@ -315,11 +343,21 @@ class StoreRelay {
     return null;
   }
 
+  /// Backend sprząta wpis pliku i oddaje miejsce w pakiecie. Po IDENTYFIKATORZE, nie po numerze
+  /// sesji — przy trasie bezpośredniej sesji po prostu nie ma.
+  Future<void> _zglosPrzerwanie(String oid) async {
+    try {
+      _send({'type': 'put_abort', 'object_id': oid});
+    } catch (_) {/* zerwane łącze i tak konczy sie sprzataniem po stronie BE */}
+    _log('I', 'upload ${oid.substring(0, 8)} cancelled by you');
+  }
+
   Future<void> _directSend(Map d, File cipher, int size, void Function(int)? onProgress) async {
     Future<void> body(_Wire w) async {
       w.sock.add(utf8.encode('len $size\n'));
       var sent = 0;
       await for (final part in cipher.openRead()) {
+        if (_przerwane) throw const UploadCancelled();
         w.sock.add(part); sent += part.length; onProgress?.call(sent);
         await w.sock.flush();
       }

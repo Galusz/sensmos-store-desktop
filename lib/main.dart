@@ -963,6 +963,11 @@ class _HomeState extends State<Home> {
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(color: Colors.white, fontSize: 12.5,
                   fontWeight: FontWeight.w600))),
+          // Powiekszanie i zmniejszanie po gigabajcie — to samo, co od dawna ma telefon.
+          // Zmniejszyc nie da sie ponizej tego, co juz lezy, wiec minus gasnie sam.
+          _przyciskRozmiaru(Icons.remove, 'pkg.shrink',
+              gb > 1 && (_s.limitB - 1073741824) >= _s.usedB ? -1 : null),
+          _przyciskRozmiaru(Icons.add, 'pkg.grow', 1),
         ]),
         const SizedBox(height: 8),
         ClipRRect(
@@ -982,6 +987,17 @@ class _HomeState extends State<Home> {
         Text(t('pkg.daily', {'galu': _s.daily.toStringAsFixed(2), 'n': _s.sellers}),
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(color: faint, fontSize: 11)),
+        // Saldo widac bylo dotad WYLACZNIE na ekranie zakupu — czyli dokladnie do chwili, w ktorej
+        // przestawalo byc potrzebne. Liczbe i tak pobieramy przy kazdym odswiezeniu stanu.
+        // Ostrzegamy kolorem dopiero ponizej tygodnia: wczesniej to tylko strasznie wyglada.
+        Text(t('pkg.balance', {
+              'galu': _s.dostepneGalu.toStringAsFixed(2),
+              'days': _s.daily > 0 ? (_s.dostepneGalu / _s.daily).floor() : 0,
+            }),
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+                color: _s.daily > 0 && _s.dostepneGalu / _s.daily < 7 ? amber : faint,
+                fontSize: 11)),
         // Ile kopii pakiet MA MIEC — klikalne, bo to jedno pytanie, wiec wolno je zadac
         // w okienku. Gdy sprzedawca zamilknie, pod spodem wychodzi, ze trwa odbudowa;
         // udawanie kompletu byloby tu najgorsza z mozliwych uprzejmosci.
@@ -1432,6 +1448,38 @@ class _HomeState extends State<Home> {
     ));
   }
 
+  /// Plus/minus przy rozmiarze pakietu. `okb == null` = nie ma czego zmieniac i przycisk gasnie.
+  Widget _przyciskRozmiaru(IconData ikona, String podpowiedz, int? okb) => SizedBox(
+        width: 20, height: 18,
+        child: IconButton(
+          tooltip: t(podpowiedz),
+          iconSize: 14, padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(minWidth: 20, minHeight: 18),
+          onPressed: okb == null || _busy != null ? null : () => _zmienRozmiar(okb),
+          icon: Icon(ikona, color: okb == null ? faint : teal),
+        ),
+      );
+
+  Future<void> _zmienRozmiar(int oGb) => _run(t('busy.resizing'), () async {
+        final r = await _s.zmienRozmiar(oGb);
+        if (r['ok'] == true) {
+          _toast(t('pkg.resized', {'n': (_s.limitB / 1073741824).toStringAsFixed(0)}));
+          return;
+        }
+        // Brak pokrycia i brak miejsca u sprzedawcy to dwie rozne rzeczy i serwer je rozroznia —
+        // oddajemy jego powod, bo tylko on wie, ktora to.
+        if (r['funds'] == true) {
+          _toast(
+              t('nopkg.funds', {
+                'need': (num.tryParse('${r['need']}') ?? 0).toStringAsFixed(1),
+                'have': (num.tryParse('${r['have']}') ?? 0).toStringAsFixed(1),
+              }),
+              bad: true);
+          return;
+        }
+        _toast('${r['error']}', bad: true);
+      });
+
   /// Zmiana liczby kopii wykupionego pakietu. Jedno pytanie, wiec okienko — te same widelki
   /// i to samo wyjasnienie, co przy zakupie.
   Future<void> _zmienKopie() async {
@@ -1440,9 +1488,11 @@ class _HomeState extends State<Home> {
       builder: (ctx, ustaw) => AlertDialog(
         backgroundColor: card,
         title: Text(t('copies.label'), style: const TextStyle(fontSize: 15)),
+        titlePadding: const EdgeInsets.fromLTRB(24, 22, 24, 16),
+        contentPadding: const EdgeInsets.fromLTRB(24, 0, 24, 0),
         content: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 380),
-          child: _wyborKopii(wybrane, (v) => ustaw(() => wybrane = v)),
+          child: _wyborKopii(wybrane, (v) => ustaw(() => wybrane = v), wOkienku: true),
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx), child: Text(t('dlg.cancel'))),
@@ -1463,10 +1513,22 @@ class _HomeState extends State<Home> {
 
   /// Wybor liczby kopii. Zalecana jest OPISANA, nie tylko podswietlona — czlowiek ma wiedziec
   /// dlaczego, zanim zaplaci o polowe wiecej.
-  Widget _wyborKopii(int wybrane, void Function(int) wybierz) =>
-      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(t('copies.label'), style: const TextStyle(color: muted, fontSize: 12)),
-        const SizedBox(height: 6),
+  /// `wOkienku` = wersja do okienka zmiany: bez wlasnego naglowka, bo powtarzalby tytul,
+  /// i z oddechem miedzy kaflami, opisem a przyciskami.
+  ///
+  /// `MainAxisSize.min` NIE jest ozdobnikiem: kolumna domyslnie bierze CALA dostepna wysokosc,
+  /// wiec w okienku rozpychala je na cale okno, a „Przejdz" ladowalo na samym dole, kilkaset
+  /// pikseli pod trzylinijkowym opisem. Na ekranie zakupu tego nie bylo widac, bo tam wysokosc
+  /// i tak jest ograniczona.
+  Widget _wyborKopii(int wybrane, void Function(int) wybierz, {bool wOkienku = false}) =>
+      Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+        if (!wOkienku) ...[
+          Text(t('copies.label'), style: const TextStyle(color: muted, fontSize: 12)),
+          const SizedBox(height: 6),
+        ],
         Row(children: [
           for (var n = _s.minKopii; n <= _s.maxKopii; n++) Padding(
             padding: const EdgeInsets.only(right: 8),
@@ -1482,9 +1544,10 @@ class _HomeState extends State<Home> {
             ),
           ),
         ]),
-        const SizedBox(height: 6),
+        SizedBox(height: wOkienku ? 16 : 6),
         Text(t('copies.why'),
             style: const TextStyle(color: faint, fontSize: 10.5, height: 1.35)),
+        if (wOkienku) const SizedBox(height: 12),
       ]);
 
   Future<void> _kup(int gb, int kopii) => _run(t('busy.refreshing'), () async {
@@ -1874,6 +1937,17 @@ class _HomeState extends State<Home> {
         SortBy.date => 'sort.date',
       });
 
+  /// Zatrzymuje i kopię zapasową, i pojedynczą wysyłkę — bo z punktu widzenia człowieka
+  /// to jedno „przestań", niezależnie od tego, co akurat leci.
+  void _zatrzymaj() {
+    if (_backup.running) {
+      _backup.przerwij(_s);
+    } else {
+      _s.przerwij();
+    }
+    setState(() {});
+  }
+
   Widget _progressBar() => Padding(
         padding: const EdgeInsets.fromLTRB(14, 8, 14, 4),
         child: Column(children: [
@@ -1888,6 +1962,22 @@ class _HomeState extends State<Home> {
               const SizedBox(width: 6),
               Text('${(_progress! * 100).toStringAsFixed(0)}%',
                   style: const TextStyle(color: faint, fontSize: 11)),
+            ],
+            // „Zatrzymaj" wyłącznie przy TRANSFERZE — przy odświeżaniu listy nie ma czego
+            // przerywać, a przycisk, który nic nie robi, uczy ludzi go nie naciskać.
+            if (_progress != null || _backup.running) ...[
+              const SizedBox(width: 8),
+              SizedBox(
+                height: 20,
+                child: TextButton(
+                  onPressed: _backup.zatrzymywane ? null : _zatrzymaj,
+                  style: TextButton.styleFrom(
+                      foregroundColor: amber, padding: const EdgeInsets.symmetric(horizontal: 8),
+                      minimumSize: Size.zero, tapTargetSize: MaterialTapTargetSize.shrinkWrap),
+                  child: Text(t(_backup.zatrzymywane ? 'busy.stopping' : 'busy.stop'),
+                      style: const TextStyle(fontSize: 11)),
+                ),
+              ),
             ],
           ]),
           const SizedBox(height: 5),

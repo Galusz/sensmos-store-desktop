@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
+import 'package:sensmos_store/sensmos_store.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'i18n.dart';
 import 'session.dart';
@@ -148,12 +149,30 @@ class Backup extends ChangeNotifier {
     _timer = Timer.periodic(Duration(minutes: everyMin), (_) { if (!running) run(s); });
   }
 
+  /// Żądanie zatrzymania. Sprawdzane przed każdym plikiem, więc pętla staje natychmiast,
+  /// a plik, który właśnie leci, przerywa sama sesja.
+  ///
+  /// Potrzebne, bo wskazanie nie tego katalogu było dotąd nieodwracalne: pętla listowała
+  /// wszystko i szła do końca, a jedynym wyjściem było ubicie programu.
+  bool _stop = false;
+  bool get zatrzymywane => _stop;
+
+  void przerwij(Session s) {
+    if (!running) return;
+    _stop = true;
+    s.przerwij();                 // przerwij TAKŻE plik, który właśnie jest w locie
+    notifyListeners();
+  }
+
   /// Bez argumentu — wszystkie pilnowane katalogi po kolei. Z argumentem — tylko ten jeden.
   Future<void> run(Session s, [Pilnowany? tylko]) async {
+    _stop = false;
     final robota = tylko != null ? [tylko] : List<Pilnowany>.from(lista);
     for (final w in robota) {
+      if (_stop) break;
       await _jeden(s, w);
     }
+    _stop = false;
     await s.refresh();
   }
 
@@ -162,6 +181,9 @@ class Backup extends ChangeNotifier {
     w.running = true;
     w.status = t('backup.scanning');
     notifyListeners();
+    // Licznik ZA try, nie w srodku: przy przerwaniu obsluga musi podac PRAWDZIWA liczbe
+    // wyslanych, a nie zero.
+    var wyslane = 0, pominiete = 0;
     try {
       final d = Directory(w.dir);
       if (!await d.exists()) { w.status = t('backup.gone'); return; }
@@ -173,8 +195,10 @@ class Backup extends ChangeNotifier {
       await for (final e in d.list(recursive: true, followLinks: false)) {
         if (e is File) pliki.add(e);
       }
-      var wyslane = 0, pominiete = 0;
       for (var i = 0; i < pliki.length; i++) {
+        // Sprawdzamy PRZED każdym plikiem, a nie raz na przebieg: przy pomylonym katalogu
+        // różnica między jednym plikiem a całym dyskiem to właśnie ta linijka.
+        if (_stop) { w.status = t('backup.stopped', {'a': wyslane}); await save(); return; }
         final f = pliki[i];
         final rel =
             f.path.substring(w.dir.length).replaceAll('\\', '/').replaceAll(RegExp(r'^/+'), '');
@@ -215,6 +239,10 @@ class Backup extends ChangeNotifier {
           ? t('backup.upToDate', {'n': liczba('plural.files', pominiete)})
           : t('backup.sent', {'a': wyslane, 'b': pominiete});
       await save();
+    } on UploadCancelled {
+      // Zatrzymanie to nie awaria. Wpis o niedokończonym pliku sprząta backend, a indeks
+      // jest zapisywany po każdym pliku, więc następny przebieg zacznie tam, gdzie stanął.
+      w.status = t('backup.stopped', {'a': wyslane});
     } catch (e) {
       w.status = t('backup.failed', {'e': '$e'});
     } finally {
