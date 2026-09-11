@@ -37,7 +37,11 @@ jobs:
           path: sensmos-store-win-x64.zip
 
   linux:
-    runs-on: ubuntu-latest
+    # NIE ubuntu-latest. Najnowsze Ubuntu linkuje do libstdc++ w wersji, ktorej nie maja
+    # Debian 12 ani Ubuntu 22.04 — paczka wywalala sie u nich na "GLIBCXX_3.4.32 not found"
+    # (zglosil uzytkownik z Debiana 12, 2026-09-11). Starsza biblioteka dziala tez na nowszych
+    # systemach, wiec jedna paczka obsluguje wszystkich; w druga strone to nie dziala.
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
@@ -48,7 +52,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y clang cmake ninja-build pkg-config \
-                                  libgtk-3-dev liblzma-dev libstdc++-12-dev \
+                                  libgtk-3-dev liblzma-dev libstdc++-11-dev \
                                   libmpv-dev mpv libayatana-appindicator3-dev
       - run: flutter pub get
       - run: flutter test
